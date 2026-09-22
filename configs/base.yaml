@@ -1,0 +1,23 @@
+# Default configuration, mirroring implementation_details.md §2. Change both together.
+# Files in configs/experiments/ override only the keys they change.
+
+model: microsoft/deberta-v3-large      # development: microsoft/deberta-v3-base
+precision: bf16                        # fp16 can be unstable with DeBERTa-v3
+max_seq_len: 384
+doc_stride: 128
+padding: dynamic                       # pad to longest in batch; batch by similar length
+max_answer_words: 30                   # L; every dev question has a reference of ≤ 28 words
+span_head: joint                       # joint | standard (baseline)
+head_dim: 256
+W_init: zeros
+decode_topk: 10
+decode_rules: [map, mbr]               # always report both
+calibration: temperature               # one T, fit on validation split
+verifier:
+  type: in_place                       # in_place | levitated | levitated_shared
+  shared_option: B                     # A = fully shared multi-task, B = frozen reader + marker-only LoRA
+  lora: {rank: 16, alpha: 32, targets: [query_proj, key_proj, value_proj]}   # check module names in the installed HF version
+  k_infer: 5
+  k_sweep: [5, 10, 20, 30]             # levitated variants only
+  crossfit_folds: 3
+seeds: [0, 1, 2]

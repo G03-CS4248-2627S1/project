@@ -1,0 +1,3 @@
+# Scripts that run on the Linux cluster keep LF line endings, even when committed from Windows.
+*.sh text eol=lf
+*.sbatch text eol=lf

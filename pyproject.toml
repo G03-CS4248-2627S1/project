@@ -1,0 +1,35 @@
+[project]
+name = "squadqa"
+version = "0.1.0"
+description = "CS4248 extractive question answering on SQuAD v1.1"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "torch>=2.5",          # 2.5+ for the optional FlexAttention path (spec §7)
+    "transformers",
+    "sentencepiece",       # DeBERTa-v3 tokenizer
+    "protobuf",            # DeBERTa-v3 fast-tokenizer conversion
+    "numpy",               # imported by qa/evaluate-v2.0.py
+    "pyyaml",
+    "python-dotenv",
+]
+# Exact versions are pinned by uv.lock, not here.
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.uv]
+package = false            # run from the repo root: python -m squadqa.<module>
+
+# CUDA build of PyTorch. Must not be newer than the cluster driver's CUDA version
+# (check nvidia-smi on a GPU node); confirm with slurm/smoke_test.sbatch.
+[tool.uv.sources]
+torch = { index = "pytorch-cu126" }
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
