@@ -1,0 +1,10 @@
+{
+  "torch": "2.14.0+cu126",
+  "cuda": "12.6",
+  "gpu": "NVIDIA A100-PCIE-40GB",
+  "capability": [
+    8,
+    0
+  ],
+  "bf16_matmul_mean": 25.514745712280273
+}

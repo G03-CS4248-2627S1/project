@@ -1,1 +1,26 @@
+# Course PDFs (local only)
 /*.pdf
+
+# Per-person profile, memory and environment
+.env
+.venv/
+local/
+CLAUDE.local.md
+.claude/settings.local.json
+
+# Downloaded datasets (re-created by a download script); generated data elsewhere in data/ is committed
+data/external/
+
+# Slurm logs (the directory itself is kept so sbatch can write into it)
+logs/*
+!logs/.gitkeep
+
+# Checkpoints belong in $SQUADQA_SCRATCH, never in the repo
+*.pt
+*.bin
+*.safetensors
+*.ckpt
+
+__pycache__/
+.pytest_cache/
+.ipynb_checkpoints/
