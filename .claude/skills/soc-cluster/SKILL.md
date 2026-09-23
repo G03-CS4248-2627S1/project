@@ -34,6 +34,16 @@ Keep `$USER` and `$HOME` inside single quotes so they expand on the cluster, for
 - **Compute nodes have internet access** (PyPI and Hugging Face).
 - **Storage:** there is no `/temp` on the login node. Checkpoints and caches go under `$HOME` (`$SQUADQA_SCRATCH`, `$HF_HOME` in the cluster `.env`).
 - **SSH to GitHub is blocked,** so the clone must use HTTPS.
+- **Nodes xgph10–xgph15 are broken for CUDA** (found 2026-09-24).
+  - Slurm lists them as `a100-40:2`, but they hold A100 80GB PCIe cards (driver 580.178.04).
+  - `nvidia-smi` sees the GPU, but PyTorch fails with `RuntimeError: No CUDA GPUs are available`.
+  - Confirmed on xgph10 and xgph11. xgph12–15 are the same group and sit idle while other nodes are busy.
+  - Jobs that request `a100-40` land there when xgpg0–7 are busy. Add `--exclude=xgph[10-15]` until the problem is fixed.
+  - xgpg0–7 (A100-PCIE-40GB) work.
+- **`sacct` fails with "No space left on device"** (2026-09-24). This is a cluster-side problem; home directories are writable. Use `squeue` and `scontrol show job <id>` instead.
+- **Measured on an A100-PCIE-40GB** (DeBERTa-v3-large, bf16, windows of at most 384 tokens, batched by length):
+  - Inference runs at about 285 windows/s, peaking at 2.2 GiB with batch 32.
+  - Training runs at about 58 windows/s with fp32 weights and bf16 autocast (batch 32 as 2 × 16). One epoch of SQuAD train (about 80k windows) takes about 23 minutes.
 
 ## Steps
 
@@ -43,9 +53,15 @@ Keep `$USER` and `$HOME` inside single quotes so they expand on the cluster, for
 2. **Do the task** with `run`.
    - To submit a job and wait for it, use `run 'sbatch --wait slurm/<script>.sbatch'` in the background.
    - Fetch its output afterwards with `log <job-name>-<job-id>.out`.
+   - **`run` does not pass stdin through** (the tunnel check's `ssh` reads it first). Piping a script into `run '... python -'` runs an empty program.
+     - To copy a one-off file, use `scp` through the tunnel: `scp -P 2222 -o HostKeyAlias=xlogin.comp.nus.edu.sg <file> <soc user>@localhost:<path under home>`.
+     - Keep one-off scripts under `$SQUADQA_SCRATCH`, not in the repo, and delete them afterwards.
+     - If a script outside the repo imports `squadqa`, run it with `PYTHONPATH=$PWD`.
 
 ## Rules
 
 - **Ask before `sbatch` or `scancel`.** Jobs use shared GPU time. Only cancel the user's own jobs.
 - **Don't edit code on the cluster.** Change it locally and push, then run `git pull` in the cluster clone.
+  - An agent can pull only if the user has stored a GitHub token on the cluster (`git config --global credential.helper store`; a read-only token for this repo is enough).
+  - Without one, `git fetch` fails with `could not read Username`. In that case, ask the user to run the pull in their own ssh session.
 - **To copy results to this machine,** use the `fetch-results` skill.
