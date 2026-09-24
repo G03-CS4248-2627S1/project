@@ -25,7 +25,7 @@ Implementation spec for coding agents and team members.
 
 ```yaml
 model: microsoft/deberta-v3-large      # development: microsoft/deberta-v3-base
-precision: bf16                        # fp16 can be unstable with DeBERTa-v3
+precision: bf16                        # bf16 autocast compute, fp32 master weights and optimizer state (§9); fp16 can be unstable with DeBERTa-v3
 max_seq_len: 384
 doc_stride: 128
 padding: dynamic                       # pad to longest in batch; batch by similar length
@@ -94,7 +94,7 @@ def word_spans(text: str) -> list[tuple[int, int]]:
   - `first_tok[w]` = first subword token whose character span lies inside the word;
   - `last_tok[w]` = last such token.
 - Use only words entirely inside the window.
-- SentencePiece offsets may include a leading space. Verify on examples and strip leading whitespace from offsets if needed.
+- **DeBERTa-v3 offsets include the leading space of a word** (checked 2026-09-24: in "Who won", the token " won" has span (3, 7), not (4, 7)). Strip leading whitespace from each token's span before comparing it with word spans. Otherwise no token "lies inside" a word that follows a space, and `first_tok` silently finds nothing.
 
 ### 3.4 Windows
 - About 5% of paragraphs exceed 250 words, so most questions produce one window.
@@ -285,7 +285,25 @@ out = flex_attention(q_c, k_c, v, score_mod=score_mod,
 
 ## 9. Practical notes
 
-- **Precision:** bf16 on A100/H100. fp16 with DeBERTa-v3 can produce NaNs.
+- **Precision** means mixed precision.
+  - `precision: bf16` means the computation runs in bf16 under `torch.autocast("cuda", dtype=torch.bfloat16)` on A100/H100.
+  - Master weights, gradients and optimizer state stay in **fp32**.
+  - Never train with bf16 or fp16 weights and a plain AdamW:
+    - bf16 keeps only 8 bits of precision, so a weight of about 0.05 can only change in steps of about 4e-4. An Adam update of about the learning rate (2e-5) rounds to zero, with no error or NaN.
+    - fp16 can overflow and produce NaNs with DeBERTa-v3.
+- **Load with an explicit dtype.**
+  - Transformers 5 loads a checkpoint in the dtype it was stored in. `microsoft/deberta-v3-large`'s `pytorch_model.bin` is stored in fp16.
+  - Training: `from_pretrained(name, revision=..., dtype=torch.float32)`.
+  - Inference only: `dtype=torch.bfloat16` is fine. On an A100 its hidden states matched fp32 with cosine similarity 0.99995.
+  - An earlier sandbox run that left out `dtype` trained with fp16 weights and fp16 Adam state, and nothing raised an error.
+- **Check dtypes rather than assume them** (rule 7). After loading the model and when saving a checkpoint, raise an error if any trainable parameter or optimizer state is not fp32.
+  - A deberta-v3-large checkpoint with Adam state is about 5.2 GB. A checkpoint of about 2.6 GB means half-precision state.
+- **Pinned and offline.**
+  - Load with `revision=MODELS[name]["revision"]` from `squadqa/download_model.py`.
+  - Set `HF_HUB_OFFLINE=1` in jobs, so a missing file raises an error instead of downloading something unpinned.
+- **Smoke-test every new training script** before a full run.
+  - Train a few dozen steps with a checkpoint, then run again with the same run id.
+  - Check that parameters and optimizer state are fp32, the loss falls, the run resumes at the saved step, and the official scorer accepts the predictions.
 - **Tokenizer:** DeBERTa-v3's fast tokenizer provides character offsets; the offset round-trip test (below) must pass before training.
 - **Offset round-trip test:** for every training question, `context[answer_start : answer_start + len(text)] == text` (true for all rows in the official files), and the word span built from §3.2–3.3 maps back to identical text, except for the 265 logged misaligned answers.
 - **Slurm:** checkpoint every N steps; resume automatically; default GPU jobs run at most 3 hours.

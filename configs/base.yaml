@@ -2,7 +2,7 @@
 # Files in configs/experiments/ override only the keys they change.
 
 model: microsoft/deberta-v3-large      # development: microsoft/deberta-v3-base
-precision: bf16                        # fp16 can be unstable with DeBERTa-v3
+precision: bf16                        # bf16 autocast compute, fp32 master weights and optimizer state (§9); fp16 can be unstable with DeBERTa-v3
 max_seq_len: 384
 doc_stride: 128
 padding: dynamic                       # pad to longest in batch; batch by similar length
