@@ -2,7 +2,8 @@
 
 Implementation spec for coding agents and team members.
 
-- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v0.4). **How:** this file.
+- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v0.5). **How:** this file. **When:** [timeline.md](timeline.md).
+- Week labels such as W2 or W5+ are plan weeks: W1–W7 are course weeks 7–13.
 - If this file and the plan disagree, stop and ask a human.
 
 ---
@@ -42,7 +43,8 @@ verifier:
   lora: {rank: 16, alpha: 32, targets: [query_proj, key_proj, value_proj]}   # check module names in the installed HF version
   k_infer: 5
   k_sweep: [5, 10, 20, 30]             # levitated variants only
-  crossfit_folds: 3
+  train_candidates: sampled            # sampled = drawn from the final reader's own span distribution (plan §4.6) | crossfit (E2 ablation)
+  crossfit_folds: 3                    # crossfit ablation only, on base
 seeds: [0, 1, 2]
 ```
 
@@ -52,7 +54,7 @@ seeds: [0, 1, 2]
 
 ### 3.1 Splits
 - **Validation:** hold out about 10% of *articles* from `train-v1.1.json` (≈44 articles, ≈8.7k questions). Split by article title, never by question: questions on the same article share paragraphs. Fixed seed; save the list to `data/splits/val_articles.txt`.
-- **Cross-fitting folds (K = 3):** also by article, over the non-validation training articles.
+- **Cross-fitting folds (K = 3), E2 ablation only:** also by article, over the non-validation training articles.
 - The final reader trains on all non-validation training articles.
 
 ### 3.2 Words (the unit of every span)
@@ -157,6 +159,8 @@ overlap = max(0, min(j, j*) − max(i, i*) + 1)
 P = overlap / (j − i + 1);  R = overlap / (j* − i* + 1);  F1 = 2PR / (P + R)   (0 if overlap = 0)
 target = (1 − α) · onehot(gold) + α · softmax over {F1 > 0} of (F1 / τ)     # α, τ tuned on validation
 ```
+**Note: this F1 differs from the official scorer's.** The scorer normalizes both strings first: lowercase, delete ASCII punctuation, remove *a*/*an*/*the*, collapse whitespace (`normalize_answer` in `qa/evaluate-v2.0.py`). Here, punctuation words and articles count, so a leading "the" or a trailing "." costs about 0.2 F1 (gold "Eiffel Tower" vs. "the Eiffel Tower": 0.8 here, 1.0 official). Low priority: don't restructure code for it. If an easy fix is wanted, give each word a 0/1 flag (0 for punctuation words and articles) and count only flagged words in the overlap and lengths, with prefix sums. A span with no flagged words then needs the scorer's empty-token rule.
+
 Cross-entropy, NaN-safe (masked entries have log p = −inf, and 0 · −inf = NaN):
 ```python
 logp = scores.flatten(1).log_softmax(-1)
@@ -167,6 +171,7 @@ loss = -torch.where(target > 0, target * logp, torch.zeros_like(logp)).sum(-1).m
 - `topk` over flattened scores (k = 10) → (i, j) → characters `(word_start[i], word_end[j])` → answer = `context[a:b]`.
 - **MAP** = top-1 span.
 - **MBR:** after calibration, among the top-k pick `argmax_y Σ_y' p(y') · F1(y, y')` using positional word F1.
+- **Note (low priority, same as §4.3):** the scorer compares *normalized strings*, so spans that normalize to the same text ("the Eiffel Tower", "Eiffel Tower", or a repeat elsewhere in the passage) are one answer to the metric, while MAP and MBR here split the probability between them. A cheap, decoding-only option is to group the top-k by `normalize_answer` text, add up their probabilities, and use the scorer's string F1 as the MBR utility. It needs no retraining and could be an extra E1 row. Don't restructure code for it.
 - **Calibration:** fit one temperature T on the validation split (minimize the NLL of the gold span).
 
 ### 4.5 Diagnostics
@@ -181,12 +186,14 @@ loss = -torch.where(target > 0, target * logp, torch.zeros_like(logp)).sum(-1).m
 ## 5. Verifier
 
 ### 5.1 Candidates and targets
-- **Training:** cross-fitted reader top-k on the held-out fold, plus the gold span if missing, plus boundary variants (±1 word at either end, valid only), plus siblings (§3.5). Deduplicate.
+- **Training:** spans sampled from the final reader's span distribution on its own training questions, at a temperature above 1 tuned on the validation split (plan §4.6). For the E2 ablation, use the cross-fitted readers' top-k on the held-out fold (§5.2) instead. In both cases add the gold span if missing, plus boundary variants (±1 word at either end, valid only), plus siblings (§3.5). Deduplicate.
 - **Inference:** the reader's top-k.
 - **Loss:** listwise. Softmax over a question's candidate scores; F1-soft target over the candidates (same α, τ form as §4.3); cross-entropy.
 - Track **top-k recall** (fraction of questions whose gold span is among the candidates). It caps verifier accuracy.
 
-### 5.2 Cross-fitting (K = 3)
+### 5.2 Cross-fitting (K = 3, E2 ablation only)
+Not the default: the default candidates are sampled from the final reader (§5.1). Run on base.
+
 1. Split non-validation training articles into 3 folds.
 2. For each fold: train a reader on the other 2 folds; generate top-k candidates on the held-out fold.
 3. Train the verifier on these candidates.

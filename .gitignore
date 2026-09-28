@@ -24,3 +24,6 @@ logs/*
 __pycache__/
 .pytest_cache/
 .ipynb_checkpoints/
+
+# Personal list of proposed plan and tooling changes, not yet adopted
+plan_proposals.md
