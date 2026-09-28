@@ -172,7 +172,11 @@ def main() -> None:
     print(f"{len(train_qs)} train questions -> {len(feats)} windows, {n_batches} steps/epoch, "
           f"{total_steps} steps; featurized in {time.time() - t0:.0f}s", flush=True)
 
-    model = AutoModelForQuestionAnswering.from_pretrained(NAME, revision=rev).cuda()  # fp32 weights, bf16 autocast
+    # fp32 master weights, bf16 autocast. dtype must be explicit: transformers 5 loads the stored
+    # dtype by default, and this checkpoint is stored in fp16.
+    model = AutoModelForQuestionAnswering.from_pretrained(NAME, revision=rev, dtype=torch.float32).cuda()
+    if {p.dtype for p in model.parameters()} != {torch.float32}:
+        raise RuntimeError(f"expected fp32 weights, got {({p.dtype for p in model.parameters()})}")
     no_decay = lambda n: n.endswith("bias") or "LayerNorm" in n
     opt = torch.optim.AdamW([
         {"params": [p for n, p in model.named_parameters() if not no_decay(n)], "weight_decay": WEIGHT_DECAY},
@@ -187,6 +191,10 @@ def main() -> None:
         print(f"resumed from step {step}", flush=True)
 
     def save_checkpoint():
+        dtypes = {p.dtype for p in model.parameters()} | {
+            v.dtype for s in opt.state.values() for v in s.values() if torch.is_tensor(v) and v.dim() > 0}
+        if dtypes != {torch.float32}:
+            raise RuntimeError(f"refusing to save non-fp32 weights or optimizer state: {dtypes}")
         tmp = ckpt_path.with_suffix(".tmp")
         torch.save({"model": model.state_dict(), "opt": opt.state_dict(), "sched": sched.state_dict(),
                     "step": step}, tmp)

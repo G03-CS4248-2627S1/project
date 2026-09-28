@@ -4,6 +4,7 @@ Group G03's CS4248 final project: an extractive question answering system on SQu
 
 - Plan (what and why): `Extractive_QA_Design_Plan.docx`
 - Implementation spec (how): [implementation_details.md](implementation_details.md)
+- Schedule (when): [timeline.md](timeline.md): stages, freeze dates and what blocks what
 - Guidance for coding agents: [AGENTS.md](AGENTS.md)
 
 **Status:** repository skeleton only. There is no model code yet.

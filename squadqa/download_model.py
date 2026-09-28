@@ -6,10 +6,12 @@ Each model is pinned to a commit of its Hugging Face repo, and each file has a
 SHA-256; a mismatch raises an error. Only the files transformers needs are
 fetched: the PyTorch weights, config and tokenizer, not the TensorFlow weights
 or the ELECTRA generator. Files already in the cache are not downloaded again.
-Load with the same pin, so nothing newer is fetched later:
+Load with the same pin, so nothing newer is fetched later, and with an explicit
+dtype: transformers 5 otherwise loads the stored dtype, which for
+deberta-v3-large is fp16 (wrong for fp32 master weights in training):
 
     from squadqa.download_model import MODELS
-    AutoModel.from_pretrained(name, revision=MODELS[name]["revision"])
+    AutoModel.from_pretrained(name, revision=MODELS[name]["revision"], dtype=torch.float32)
 
 On the SoC cluster, run it in a CPU job rather than on the login node, which
 limits each process to 1 GB of virtual memory.

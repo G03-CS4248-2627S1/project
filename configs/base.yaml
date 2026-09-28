@@ -2,7 +2,7 @@
 # Files in configs/experiments/ override only the keys they change.
 
 model: microsoft/deberta-v3-large      # development: microsoft/deberta-v3-base
-precision: bf16                        # fp16 can be unstable with DeBERTa-v3
+precision: bf16                        # bf16 autocast compute, fp32 master weights and optimizer state (§9); fp16 can be unstable with DeBERTa-v3
 max_seq_len: 384
 doc_stride: 128
 padding: dynamic                       # pad to longest in batch; batch by similar length
@@ -19,5 +19,6 @@ verifier:
   lora: {rank: 16, alpha: 32, targets: [query_proj, key_proj, value_proj]}   # check module names in the installed HF version
   k_infer: 5
   k_sweep: [5, 10, 20, 30]             # levitated variants only
-  crossfit_folds: 3
+  train_candidates: sampled            # sampled = drawn from the final reader's own span distribution (plan §4.6) | crossfit (E2 ablation)
+  crossfit_folds: 3                    # crossfit ablation only, on base
 seeds: [0, 1, 2]

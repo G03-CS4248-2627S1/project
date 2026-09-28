@@ -40,6 +40,10 @@ Keep `$USER` and `$HOME` inside single quotes so they expand on the cluster, for
   - Confirmed on xgph10 and xgph11. xgph12–15 are the same group and sit idle while other nodes are busy.
   - Jobs that request `a100-40` land there when xgpg0–7 are busy. Add `--exclude=xgph[10-15]` until the problem is fixed.
   - xgpg0–7 (A100-PCIE-40GB) work.
+- **xgpj0 is an ARM (aarch64) node** (found 2026-09-24).
+  - It's listed as `a100-80:1` in the `gpu` partition, but the `.venv` is built for x86_64, so imports such as numpy fail there.
+  - Add `--exclude=xgpj0` to jobs that request `a100-80`. xgph0–9 are the x86_64 A100-80GB nodes, and they work.
+- **`sbatch --wrap` runs its command with `/bin/sh`, not bash.** `source` doesn't exist there, so write `set -a; . ./.env; set +a` and call `.venv/bin/python` directly.
 - **`sacct` fails with "No space left on device"** (2026-09-24). This is a cluster-side problem; home directories are writable. Use `squeue` and `scontrol show job <id>` instead.
 - **Measured on an A100-PCIE-40GB** (DeBERTa-v3-large, bf16, windows of at most 384 tokens, batched by length):
   - Inference runs at about 285 windows/s, peaking at 2.2 GiB with batch 32.
