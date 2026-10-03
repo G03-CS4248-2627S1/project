@@ -78,8 +78,9 @@ case "${1:-}" in
     git diff --quiet HEAD || echo "Note: this checkout has uncommitted changes. The job runs commit ${head:0:7} without them." >&2
     opts=(--exclude="$BROKEN_NODES")
     [ -z "${SOC_MAIL_TYPE:-}" ] || opts+=(--mail-type="$SOC_MAIL_TYPE")
-    # Options given here come after the defaults, so they override them.
-    remote "$(printf '%q ' sbatch "${opts[@]}" "$@")" ;;
+    # Options given here come after the defaults, so they override them. Jobs inherit SQUADQA_COMMIT
+    # (with sbatch's default --export=ALL), so a job script can check that the clone hasn't moved since.
+    remote "SQUADQA_COMMIT=$head $(printf '%q ' sbatch "${opts[@]}" "$@")" ;;
   jobs)
     need_tunnel
     remote 'squeue -u "$USER" -o "%.10i %.16j %.9T %.10M %.10l %.14b %R"' ;;

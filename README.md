@@ -45,12 +45,18 @@ Run these in a login session on the cluster.
    ```
    git clone https://github.com/G03-CS4248-2627S1/project.git cs4248 && cd cs4248
    ```
+   So that your assistant can `git pull` there without you, store the token first with `git config --global credential.helper store`. A fine-grained, read-only token for this repo is enough.
 3. **Create `.env`** from `.env.example`, with `SQUADQA_SCRATCH` and `HF_HOME` under your home, for example `$HOME/cs4248-scratch` and `$HOME/.cache/huggingface`. There is no `/temp` on the login node.
 4. **Build the environment in a CPU job.** The login node limits each process to 1 GB of virtual memory, which uv and PyTorch exceed:
    ```
    srun --partition=normal --time=00:30:00 --cpus-per-task=4 --mem=8G ~/.local/bin/uv sync
    ```
-5. **Check the GPU setup.** The job writes `results/<date>-smoke-j<job id>/smoke.json`:
+5. **Download the pinned model and the external datasets,** also in a CPU job. Jobs load models offline, so they fail without this:
+   ```
+   srun --partition=normal --time=00:30:00 --cpus-per-task=4 --mem=8G .venv/bin/python -m squadqa.download_model
+   srun --partition=normal --time=00:30:00 --cpus-per-task=4 --mem=8G .venv/bin/python -m squadqa.download_external
+   ```
+6. **Check the GPU setup.** The job writes `results/<date>-smoke-j<job id>/smoke.json`:
    ```
    sbatch slurm/smoke_test.sbatch
    ```
