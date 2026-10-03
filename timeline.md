@@ -2,7 +2,7 @@
 
 When each part of the project happens, what blocks what, and what to cut if we fall behind.
 
-- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.0). **How:** [implementation_details.md](implementation_details.md). **When:** this file. **How we work:** [workflow.md](workflow.md).
+- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.1). **How:** [implementation_details.md](implementation_details.md). **When:** this file. **How we work:** [workflow.md](workflow.md).
 - This file expands plan §9 into stages. The plan's W1–W7 are course weeks 7–13. Section numbers below (§4.3, E3, …) refer to the plan.
 - If this file and the plan disagree on scope, stop and ask a human.
 - Drafted 2026-09-28 (week 7). Moved to the submitted proposal's schedule on 2026-10-03 (plan v1.0). Whoever changes a milestone or a stage's scope updates this file and tells the team.
@@ -86,7 +86,7 @@ None of these waits for a result. All of them can be built against the baseline.
 |---|---|
 | Compound-objective and F1-target loss code | Baseline code |
 | Cross-span diagnostic (E3) | Baseline predictions |
-| Calibration and MBR decoding code (F1 + γ·EM) | Baseline span probabilities; retuned later |
+| Calibration and MBR decoding code (F1 + γ·EM over content words, boundary variants grouped; spec §4.4) | Baseline span probabilities; retuned later |
 | Adversarial SQuAD (worst-case score, spec §6) and SQuAD-Shifts evaluation | Nothing |
 | Bootstrap test script | Nothing |
 | Pins for `deberta-v3-base` and ModernBERT-large; `peft` and `scipy` in `pyproject.toml` (with `uv lock` and the cluster smoke test) | Nothing |
@@ -116,7 +116,7 @@ These wait on a result, but are short and off the critical path:
 - **1.3 Data pipeline.** 384-token windows with stride 128; offset map between characters, subword tokens and words; dynamic padding and length bucketing (spec §3.2–3.4). The offset unit test must pass before any training.
 - **1.4 Evaluation pipeline.** Model outputs → top span → `predictions.json` → official scorer. Windows of one passage share a softmax. Includes Adversarial SQuAD (worst-case score, spec §6) and SQuAD-Shifts, both from `download_external`.
 - **1.5 Hyperparameter tuning and baseline (ladder row 0).** Base for development, large for results. Start the 3 large seeds.
-- **1.6 First decoding comparison.** MAP vs. MBR on the baseline (plan §4.5).
+- **1.6 First decoding comparison.** MAP vs. MBR on the baseline (plan §4.5), with boundary variants grouped and F1 and EM over content words (spec §4.4). Also measure the **normalization gap**: on validation, how often the prediction matches the gold span exactly by position vs. by the official EM. It bounds what normalized training targets (2.2) can gain.
 - **1.7 Cross-span diagnostic (E3) on the baseline.** It decides how much effort the joint head deserves (plan §4.3; recipe in spec §4.5).
 - **1.8 Dependencies and pins** for stage 2 and the verifier (§3.3).
 
@@ -129,7 +129,7 @@ These wait on a result, but are short and off the critical path:
 **Goal:** settle the reader design. This is the main blocker (§3.2).
 
 - **2.1 Compound objective** (plan §4.3; spec §4.3). Joint head plus the auxiliary independent loss, against the baseline on base. Ablate W init, the length bonus, and joint only.
-- **2.2 F1-weighted targets** (plan §4.4), against the baseline on base. Sweep α (the F1:EM loss ratio) and τ.
+- **2.2 F1-weighted targets** (plan §4.4), against the baseline on base. Sweep α (the F1:EM loss ratio) and τ, and compare positional with normalized F1 in the targets (spec §4.3), sized by the gap measured in 1.6.
 - **2.3 Combine** the two only if both beat the baseline on the validation split. Otherwise keep the one that does, and report the other as an ablation.
 - **2.4 Rerun E3 on the new head.** The before-and-after comparison is the E3 result.
 - **2.5 Freeze the reader** (Thu 15 Oct) through a freeze PR (workflow.md §5.3). Then launch ladder rows 1–2 on large, 3 seeds, from `main`.
