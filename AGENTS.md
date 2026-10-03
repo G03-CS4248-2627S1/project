@@ -28,6 +28,7 @@ README.md, "Team workflow", has the full version, including how experiments move
 - **[Extractive_QA_Design_Plan.docx](Extractive_QA_Design_Plan.docx)** (the plan) says *what* is being built and *why*. It is a living document that the team edits between sessions.
   - Before any task that depends on it, re-read the current file and check its version line and change log (§16). Don't rely on an earlier summary, and don't copy plan content into this file.
   - A docx is a zip archive, and the text is in `word/document.xml`. If python-docx and pandoc aren't available, read that file with Python's `zipfile` module.
+- **[workflow.md](workflow.md)** says *how the team works*: where code goes, issues and stage kickoffs, branches, when to open a PR, review, and how experiments and stage freezes run. **Read it before starting a task.** Assistants never push to `main` or merge PRs.
 - **[timeline.md](timeline.md)** says *when*: the project's stages, freeze dates, the critical path, and what to cut if the team falls behind. Plan weeks W1–W7 are course weeks 7–13. Check it before choosing what to work on next, and update it when a freeze date or a stage's scope changes.
 - If the spec and the plan disagree, stop and ask a human.
 

@@ -88,6 +88,8 @@ Run the script without arguments to list its commands.
 
 ## Team workflow
 
+The full workflow (where code goes, issues, branches, when to open a PR, review, experiments and stage freezes) is in [workflow.md](workflow.md). This section is the short version.
+
 Every teammate works with an AI assistant. Each person's assistant keeps a personal memory in `local/MEMORY.md`, which is gitignored. On your first session, the assistant sets up `local/` by following `local.example/README.md`.
 
 **Each session**
@@ -106,7 +108,7 @@ Every teammate works with an AI assistant. Each person's assistant keeps a perso
 
 **Merging and sharing**
 
-- **Pull requests:** open a PR into `main` and have a teammate review it. Roles are flexible, so ask whoever knows that area best. Keep `main` runnable.
+- **Pull requests:** open a PR into `main` and have a teammate review it, then squash and merge and delete the branch. Roles are flexible, so ask whoever knows that area best. Keep `main` runnable. Never push to `main` directly.
 - **Headline numbers:** they come only from code on `main` whose results are committed.
 - **Dependencies:** edit `pyproject.toml`, run `uv lock`, and pass the smoke test on the cluster before committing `uv.lock`. Everyone then runs `uv sync` locally and `soc.sh sync` for the cluster.
 - **Shared knowledge,** such as a cluster quirk, goes into AGENTS.md through a PR. Personal notes stay in `local/MEMORY.md`.
