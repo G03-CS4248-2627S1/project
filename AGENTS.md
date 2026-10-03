@@ -2,7 +2,7 @@
 
 CS4248 (Introduction to Large Language Models, AY2026/27 Sem 1) group project: an **extractive question answering** system on SQuAD v1.1. Given a passage and a question, the system returns a span of the passage as the answer.
 
-The directory skeleton and the cluster environment are in place, but there is no model code or test yet.
+The data pipeline, evaluation, decoding and their tests are on `main`; the reader and the rest of the method are being built (workflow.md §2.1 lists the modules).
 
 ## Personal memory and first session
 
@@ -14,6 +14,7 @@ Each teammate has a gitignored `local/` folder. Its `local/MEMORY.md` holds what
   - Never store passwords or tokens in it.
 - **If there is no `local/` folder,** this is the user's first session. Follow `local.example/README.md` with them before other work, so no teammate's setup lags behind.
 - **Shared or personal?** Facts that help everyone, such as a cluster quirk, belong in AGENTS.md; propose the edit to the user. Facts about this user belong in `local/MEMORY.md`.
+- **Mistakes.** When you make a mistake (a wasted job, a wrong claim, a defect a reviewer catches, a command that failed on a wrong assumption), record it with its lesson in `local/MEMORY.md` under "Mistakes and lessons" in the same session. If a teammate's assistant could repeat it, also add the lesson to "Lessons from past mistakes" below through a PR. Read that section before similar work.
 
 **Session workflow:**
 1. Run `git pull` and read `local/MEMORY.md`.
@@ -90,6 +91,23 @@ workflow.md has the full version: issues, when to open a PR, review, and how exp
     - Request A100, H100 or H200 GPUs, which support bf16.
     - SSH to GitHub is blocked, so clone and pull over HTTPS.
     - `soc.sh submit slurm/smoke_test.sbatch` checks the environment.
+
+## Lessons from past mistakes
+
+Mistakes assistants made in this project, kept so nobody repeats them. Add to this list through a PR; keep each entry to the lesson.
+
+- **Trace every job before asking to submit it.** Check what each job will do with its exact arguments. A smoke-run resume must drop `--stop-after` (it is a command-line flag, not config, so the resume check still passes); passing it again stops the resumed run at the same step and wastes a job (2026-10-04).
+- **`Closes #N` only when the PR finishes the issue.** Read the issue's "Done when" first. If part of it depends on another issue's work, write `Part of #N` and note on both issues which PR will close it. Reviewers caught two premature closures (2026-10-04).
+- **GitHub closing keywords work anywhere in a PR body,** even mid-sentence: "#21's PR closes #22" linked #22 for closing. After editing a body, check `gh pr view <n> --json closingIssuesReferences`.
+- **Verify spec claims against a primary source or the data before writing them.** Three spec statements were wrong and caught later: the Adversarial SQuAD grouping (checked against the authors' `eval_squad.py`), the validation-split size (count it), and pooling of spans without content words.
+- **The spec and the plan move together.** When a number or rule changes in the spec, search the plan for it too. A plan version bump touches the title line, the page header (`word/header1.xml`) and the change log; the header was once left at an old version.
+- **Check end-to-end invariants, not only local ones.** Checking that tokens lie inside words missed that `return_overflowing_tokens` (tokenizers 0.23) drops the end of long passages; check that every passage token reaches some window (spec §3.3).
+- **Tool gotchas:**
+  - transformers 5 removed `build_inputs_with_special_tokens`; use `squadqa.data.pair_layout`.
+  - `load_dotenv()` with no path fails in code run from stdin (`python - <<EOF`); pass `".env"`.
+  - On Windows, set `PYTHONIOENCODING=utf-8` before printing non-ASCII text, or Python raises `UnicodeEncodeError`.
+  - YAML 1.1 reads `3e-5` as a string. Write `3.0e-5` in YAML files; `--set train.lr=3e-5` is converted for you, and a wrong type raises.
+  - In tests, compute hand-made word indices from the text, and compare float32 values with `pytest.approx`.
 
 ## Data (`qa/`)
 

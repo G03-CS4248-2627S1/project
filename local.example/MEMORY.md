@@ -19,6 +19,9 @@ This file is gitignored, so only you and your AI assistant see it. The assistant
 ## Cluster status
 <!-- Tunnel and key login set up? Where the clone lives? Environment built? Smoke test passed (job id, date)? -->
 
+## Mistakes and lessons
+<!-- The assistant's own mistakes, newest first, dated, each with its lesson. Ones a teammate could repeat also go in AGENTS.md, "Lessons from past mistakes". -->
+
 ## Personal skills
 <!-- Procedures you repeat, with your own values filled in. Only commands that have worked. -->
 
