@@ -1,9 +1,9 @@
-"""Candidate for tests/reference/test_offsets.py (issue #19).
+"""Offset round-trip reference test (issue #19; spec §3.2-3.3, §9).
 
-This file is deliberately outside tests/reference/: repository policy requires a human who
-did not write squadqa/data.py to review the reference test line by line before placing it
-there.  The test reads the raw SQuAD JSON independently and exercises the public mapping and
-window functions rather than trusting featurize's bookkeeping.
+Drafted by an assistant and reviewed line by line by Bruhmiuz, who did not write or read
+squadqa/data.py (spec §8). Never edit it to make new code pass (spec rule 6). The test reads
+the raw SQuAD JSON independently and exercises the public mapping and window functions
+rather than trusting featurize's bookkeeping.
 """
 
 import json
