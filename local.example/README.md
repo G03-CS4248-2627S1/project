@@ -21,6 +21,6 @@ Find out what you can by exploring, and ask only for what you can't discover.
 6. **Set up cluster access** (README.md, "Working with the cluster from your own machine").
    - The user connects to the NUS Cisco VPN, then runs `bash .claude/skills/soc-cluster/soc.sh connect` and `bash .claude/skills/soc-cluster/soc.sh setup-key` in their own terminal. Both ask for the SoC password.
    - Then you run `soc.sh check`.
-7. **Set up the cluster clone** (README.md, "One-time setup on the cluster"): install uv, clone over HTTPS, create the cluster `.env`, then run `soc.sh sync`. Ask before submitting the smoke test (`sbatch slurm/smoke_test.sbatch`), then fetch its result with `soc.sh fetch`.
+7. **Set up the cluster clone** (README.md, "One-time setup on the cluster"): install uv, clone over HTTPS, create the cluster `.env`, then run `soc.sh sync`. Ask before submitting the smoke test (`soc.sh submit slurm/smoke_test.sbatch`), then fetch its result with `soc.sh fetch`.
 8. **Create `sandbox/<name>/`** for the user's scratch work.
 9. **Record what's done** under "Cluster status" and anything unfinished under "Open threads", with dates.

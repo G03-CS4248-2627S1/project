@@ -95,7 +95,7 @@ Every teammate works with an AI assistant. Each person's assistant keeps a perso
 
 1. Add or edit a config in `configs/experiments/` along with the code it needs, then commit and push. Each run records the commit it came from.
 2. On the cluster, run `git pull`. If `pyproject.toml` or `uv.lock` changed, also run `soc.sh sync`.
-3. Submit the job with `sbatch` on the `gpu` partition (up to 3 hours) or `gpu-long` (up to 3 days). Checkpoints go to `$SQUADQA_SCRATCH`.
+3. Write the job script from `slurm/template.sbatch`, then submit it with `soc.sh submit slurm/<name>.sbatch` (AGENTS.md, "Submitting jobs"). It refuses if the cluster clone isn't at your commit. Use the `gpu` partition (up to 3 hours) or `gpu-long` (up to 3 days). Checkpoints go to `$SQUADQA_SCRATCH`.
 4. Run `soc.sh fetch <run_id>`, then commit `results/<run_id>/` on the same branch as the code that produced it.
 
 **Merging and sharing**

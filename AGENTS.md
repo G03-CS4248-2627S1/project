@@ -62,12 +62,21 @@ README.md, "Team workflow", has the full version, including how experiments move
   - **`.claude/skills/soc-cluster/soc.sh`** runs commands in the user's cluster clone and copies results and logs back.
     - It works through a tunnel the user opens with `soc.sh connect`, plus SSH key login set up once with `soc.sh setup-key`. Both ask for the SoC password, so the user runs them; agents can't type passwords.
     - The `soc-cluster` and `fetch-results` skills wrap the script. Other agents can call it directly; run it without arguments for usage.
+  - **Submitting jobs.** Every agent follows these steps, whatever tool it is:
+    1. **Ask the user first,** naming the script, GPU and time limit. Jobs use shared GPU time. Do the same before `scancel`, and only cancel the user's own jobs.
+    2. **Write the job script** by copying `slurm/template.sbatch`. It sets up `.env`, the venv, offline model loading and the run id. Commit and push it with the code it runs.
+    3. **Update the cluster clone** to the same commit: `soc.sh run 'git fetch && git checkout <branch> && git pull --ff-only'`.
+    4. **Submit** with `soc.sh submit [sbatch options] slurm/<name>.sbatch [script args]`, never with a raw `sbatch`.
+       - It refuses if the clone isn't at your local commit or has uncommitted edits.
+       - It keeps jobs off broken nodes. The list is `BROKEN_NODES` in `soc.sh`; update it there when a node breaks or is fixed.
+       - If `SOC_MAIL_TYPE` is set in the local `.env` (for example `END,FAIL`), Slurm emails `<soc unix id>@comp.nus.edu.sg`.
+    5. **Watch and collect.** `soc.sh jobs` shows the queue, `soc.sh log <job name>-<job id>.out` copies a log, and `soc.sh fetch <run_id>` copies results.
   - **Cluster limits** (checked September 2026; details in `.claude/skills/soc-cluster/SKILL.md`):
     - The login node allows 1 GB of virtual memory per process and has a tiny `/tmp` quota. Build environments and run Python in jobs, not on the login node.
     - GPU jobs need `--partition=gpu` (up to 3 hours) or `--partition=gpu-long` (up to 3 days). The default partition has no GPUs.
     - Request A100, H100 or H200 GPUs, which support bf16.
     - SSH to GitHub is blocked, so clone and pull over HTTPS.
-    - `sbatch slurm/smoke_test.sbatch` checks the environment.
+    - `soc.sh submit slurm/smoke_test.sbatch` checks the environment.
 
 ## Data (`qa/`)
 
