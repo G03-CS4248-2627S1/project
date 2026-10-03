@@ -126,7 +126,7 @@ uv run python qa/evaluate-v2.0.py qa/dev-v1.1.json predictions.json
 |---|---|
 | `qa/` | Course-provided data (`train-v1.1.json`, `dev-v1.1.json`) and the official scorer |
 | `data/splits/` | Validation split, cross-fitting folds, skipped training ids (committed) |
-| `data/external/` | Downloaded datasets such as Adversarial SQuAD and MRQA (gitignored) |
+| `data/external/` | Downloaded datasets: Adversarial SQuAD, AdversarialQA, SQuAD 2.0 unanswerable questions, SQuAD-Shifts, Paraphrased SQuAD (gitignored) |
 | `configs/` | `base.yaml` defaults and one file per experiment in `experiments/` |
 | `squadqa/` | Project code, one module per component |
 | `slurm/` | Job scripts for the SoC cluster |

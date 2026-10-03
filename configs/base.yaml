@@ -7,18 +7,25 @@ max_seq_len: 384
 doc_stride: 128
 padding: dynamic                       # pad to longest in batch; batch by similar length
 max_answer_words: 30                   # L; every dev question has a reference of ≤ 28 words
-span_head: joint                       # joint | standard (baseline)
+span_head: compound                    # compound (row 1+) = joint + auxiliary independent loss | joint (P2 ablation) | standard (row 0)
+aux_independent_weight: 1.0            # compound only (Fajcik et al., 2021)
 head_dim: 256
 W_init: zeros
 decode_topk: 10
 decode_rules: [map, mbr]               # always report both
+mbr_em_weight: 1.0                     # γ, the F1:EM decoding ratio: MBR utility F1 + γ·EM; 0 = expected F1
 calibration: temperature               # one T, fit on validation split
+extra_train_data: []                   # row 5: [adversarialqa]; augmentation (P2) adds augmented
 verifier:
-  type: in_place                       # in_place | levitated | levitated_shared
-  shared_option: B                     # A = fully shared multi-task, B = frozen reader + marker-only LoRA
-  lora: {rank: 16, alpha: 32, targets: [query_proj, key_proj, value_proj]}   # check module names in the installed HF version
+  variant: shared_lora                 # shared_lora = frozen reader + LoRA | separate = ModernBERT-large (E2 compares both)
+  separate_model: answerdotai/ModernBERT-large   # pin in squadqa/download_model.py before first use
+  type: in_place                       # in_place | levitated | levitated_shared (both P3)
+  shared_option: B                     # levitated_shared only (P3): A = fully shared multi-task, B = frozen reader + marker-only LoRA
+  lora: {rank: 16, alpha: 32, targets: [query_proj, key_proj, value_proj]}   # shared_lora and option B; check module names in the installed HF version
   k_infer: 5
-  k_sweep: [5, 10, 20, 30]             # levitated variants only
+  k_sweep: [5, 10, 20, 30]             # levitated variants only (P3)
   train_candidates: sampled            # sampled = drawn from the final reader's own span distribution (plan §4.6) | crossfit (E2 ablation)
   crossfit_folds: 3                    # crossfit ablation only, on base
+  sibling_negatives: false             # P2 ablation (§3.5)
+  unanswerable_negatives: false        # row 5: SQuAD 2.0 unanswerable questions with a null candidate (§5.1)
 seeds: [0, 1, 2]
