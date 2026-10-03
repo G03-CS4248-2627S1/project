@@ -100,7 +100,8 @@ def word_spans(text: str) -> list[tuple[int, int]]:
 ```
 
 ### 3.3 Words ↔ subword tokens
-- Tokenize `(question, context)` with the fast tokenizer: `truncation="only_second"`, `max_length=384`, `stride=128`, `return_overflowing_tokens=True`, `return_offsets_mapping=True`.
+- Tokenize each passage once on its own with the fast tokenizer (`return_offsets_mapping=True`), and each question on its own. A window is `[CLS] question [SEP] passage tokens [SEP]`, at most 384 tokens; consecutive windows overlap by 128 passage tokens and together cover the whole passage (`squadqa.data.make_windows`).
+- **Do not use `return_overflowing_tokens`.** tokenizers 0.23.2 returns at most two windows per (question, passage) pair and sometimes cuts the second short, so the end of the passage is lost for 528 train, 57 validation and 146 dev questions (checked 2026-10-04). Where the library covers the whole passage, our windows are identical to its windows (`tests/test_data.py`).
 - For each passage word in a window:
   - `first_tok[w]` = first subword token whose character span lies inside the word;
   - `last_tok[w]` = last such token.
@@ -108,7 +109,7 @@ def word_spans(text: str) -> list[tuple[int, int]]:
 - **DeBERTa-v3 offsets include the leading space of a word** (checked 2026-09-24: in "Who won", the token " won" has span (3, 7), not (4, 7)). Strip leading whitespace from each token's span before comparing it with word spans. Otherwise no token "lies inside" a word that follows a space, and `first_tok` silently finds nothing.
 
 ### 3.4 Windows
-- About 5% of paragraphs exceed 250 words, so most questions produce one window.
+- About 5% of paragraphs exceed 250 words, so most questions produce one window: 689 of the 87,256 kept training questions have more than one, and none has more than 4.
 - Several windows: put the valid span scores of all windows of a question into **one** softmax. A span present in several windows uses the score from the window where it is most central (largest `min(tokens to its left, tokens to its right)` within the window).
 
 ### 3.5 Sibling answers (verifier negatives)
