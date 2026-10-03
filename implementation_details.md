@@ -18,7 +18,7 @@ Implementation spec for coding agents and team members.
 6. Never edit a reference implementation or a test to make new code pass. If a test looks wrong, stop and report.
 7. No silent fallbacks. If a fast path (FlexAttention, KV cache) is unavailable, raise an error or log it loudly. Never switch paths quietly, especially in benchmarks.
 8. Every training job checkpoints and can resume. Default cluster GPU jobs are capped at 3 hours.
-9. Do not start a hand-written Triton/CUDA kernel. Out of scope until after the deadline (plan §12).
+9. Do not start a hand-written Triton/CUDA kernel. Out of scope until after the deadline.
 
 ---
 
@@ -115,7 +115,11 @@ def word_spans(text: str) -> list[tuple[int, int]]:
 - Used only with `sibling_negatives: true` (P2 ablation).
 
 ### 3.6 Additional data (ladder row 5, plan §4.8)
-- All files come from `python -m squadqa.download_external`, which pins them, drops validation articles from training files and removes duplicates. Its docstring says what each file may be used for.
+- All files come from `python -m squadqa.download_external`, which pins them and removes duplicate questions and answers. Its docstring says what each file may be used for.
+- It does **not** drop validation articles. Every training loader must:
+  - drop each question whose article title is in the validation split (`squadqa.splits.load_val_titles()`);
+  - raise an error if any passage matches a dev-v1.1 passage (whitespace-normalized).
+  - Measured 2026-10-03 (plan §12.2): 4,899 SQuAD 2.0 and 2,596 AdversarialQA training questions sit on validation articles; none sit on dev passages.
 - **AdversarialQA** (`data/external/adversarialqa/train.json`, the combined split): extra reader training data when `extra_train_data` contains `adversarialqa`. Same format as SQuAD, one answer per question. `adversarialqa/dev.json` is built on dev-v1.1 passages, so never train or tune on it (rule 1).
 - **SQuAD 2.0 unanswerable questions** (`data/external/squad2/train-v2.0.json`): after duplicate removal this file holds only the unanswerable questions, all on train-v1.1 passages. They are verifier negatives when `unanswerable_negatives: true` (§5.1). Their candidates are the reader's top-k plus each `plausible_answers` span, located with its `answer_start` (rule 4) and converted to word spans (§3.2). Drop plausible answers that are not word-aligned.
 - **Augmentation (P2):** each rule (letter case, date format, name substitution) edits the passage, question and answer together, and carries `answer_start` through the edit by offset arithmetic, never by search (rule 4). The offset round-trip test (§9) must pass on the augmented set. Never augment validation articles or anything from dev-v1.1 (rules 1–2).
