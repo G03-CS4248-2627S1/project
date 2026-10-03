@@ -38,6 +38,8 @@ W_init: zeros
 decode_topk: 10
 decode_rules: [map, mbr]               # always report both
 mbr_em_weight: 1.0                     # γ, the F1:EM decoding ratio: MBR utility F1 + γ·EM; 0 = expected F1
+mbr_utility: official                  # official = the scorer's normalized strings | positional (E1 row; §4.4)
+f1_target: normalized                  # normalized = approximates the scorer's F1 | positional (ablation; §4.3)
 calibration: temperature               # one T, fit on validation split
 extra_train_data: []                   # row 5: [adversarialqa]; augmentation (P2) adds augmented
 verifier:
@@ -178,7 +180,11 @@ P = overlap / (j − i + 1);  R = overlap / (j* − i* + 1);  F1 = 2PR / (P + R)
 target = (1 − α) · onehot(gold) + α · softmax over {F1 > 0} of (F1 / τ)     # α, τ tuned on validation
 ```
 - `α` is the proposal's F1:EM loss ratio: the exact-match (one-hot) and F1-weighted parts are mixed `(1 − α) : α`.
-**Note: this F1 differs from the official scorer's.** The scorer normalizes both strings first: lowercase, delete ASCII punctuation, remove *a*/*an*/*the*, collapse whitespace (`normalize_answer` in `qa/evaluate-v2.0.py`). Here, punctuation words and articles count, so a leading "the" or a trailing "." costs about 0.2 F1 (gold "Eiffel Tower" vs. "the Eiffel Tower": 0.8 here, 1.0 official). Low priority: don't restructure code for it. If an easy fix is wanted, give each word a 0/1 flag (0 for punctuation words and articles) and count only flagged words in the overlap and lengths, with prefix sums. A span with no flagged words then needs the scorer's empty-token rule.
+**Note: this F1 differs from the official scorer's.** The scorer normalizes both strings first: lowercase, delete ASCII punctuation, remove *a*/*an*/*the*, collapse whitespace (`normalize_answer` in `qa/evaluate-v2.0.py`). Here, punctuation words and articles count, so a leading "the" or a trailing "." costs about 0.2 F1 (gold "Eiffel Tower" vs. "the Eiffel Tower": 0.8 here, 1.0 official). This is part of the F1-weighted-target work (timeline 2.2), selected by `f1_target`, with an ablation of `positional` vs. `normalized` on base:
+- **`normalized` (approximate):** give each word a 0/1 flag (0 for punctuation words and articles) and count only flagged words in the overlap and lengths, with prefix sums, so it stays vectorized on the GPU. A span with no flagged words follows the scorer's empty-token rule. It still differs from the scorer for punctuation inside a word ("U.S." → "us", "well-known" → "wellknown") and because the scorer compares bags of tokens rather than positions.
+- **Exact (optional):** precompute once, per training question, the spans with non-zero official F1, using the scorer's own `normalize_answer` and `f1_score`, and load them as sparse targets.
+- **Equivalent spans as gold** (exact-match credit for every span whose normalized text equals the gold's, including repeats elsewhere in the passage) needs a documented exception to rule 4, because finding those spans is string search. Decide as a team before implementing it.
+- The size of the gap is measured in week 8 (timeline 1.6); it bounds what `normalized` can gain.
 
 Cross-entropy, NaN-safe (masked entries have log p = −inf, and 0 · −inf = NaN):
 ```python
@@ -194,11 +200,12 @@ loss = -torch.where(target > 0, target * logp, torch.zeros_like(logp)).sum(-1).m
 
 ### 4.4 Decoding
 - `topk` over flattened scores (k = 10) → (i, j) → characters `(word_start[i], word_end[j])` → answer = `context[a:b]`.
-- **MAP** = top-1 span.
+- **Group by the scorer's strings** (`mbr_utility: official`, the default): group the top-k by `normalize_answer` text and add up the probabilities within each group. Spans the scorer can't tell apart ("the Eiffel Tower", "Eiffel Tower", a repeat elsewhere in the passage) then count as one answer.
+- **MAP** = the most probable group, returning its most probable span (top-1 span when `mbr_utility: positional`).
 - **MBR:** after calibration, among the top-k pick `argmax_y Σ_y' p(y') · [F1(y, y') + γ · EM(y, y')]`.
-  - F1 is positional word F1; EM(y, y') = 1 if the spans are identical.
+  - With `official`, y ranges over groups, and F1 and EM are the scorer's own `f1_score` and `exact_match_score` (load `qa/evaluate-v2.0.py` with `importlib`), so MBR optimizes the reported metric. Return the group's most probable span.
+  - With `positional` (an E1 row), F1 is positional word F1 and EM(y, y') = 1 if the spans are identical.
   - γ = `mbr_em_weight` (the proposal's F1:EM ratio), tuned on the validation split. γ = 0 is expected F1; a large γ approaches MAP.
-- **Note (low priority, same as §4.3):** the scorer compares *normalized strings*, so spans that normalize to the same text ("the Eiffel Tower", "Eiffel Tower", or a repeat elsewhere in the passage) are one answer to the metric, while MAP and MBR here split the probability between them. A cheap, decoding-only option is to group the top-k by `normalize_answer` text, add up their probabilities, and use the scorer's string F1 as the MBR utility. It needs no retraining and could be an extra E1 row. Don't restructure code for it.
 - **Calibration:** fit one temperature T on the validation split (minimize the NLL of the gold span).
 
 ### 4.5 Diagnostics
@@ -215,7 +222,7 @@ loss = -torch.where(target > 0, target * logp, torch.zeros_like(logp)).sum(-1).m
 ### 5.1 Candidates and targets
 - **Training:** spans sampled from the final reader's span distribution on its own training questions, at a temperature above 1 tuned on the validation split (plan §4.6). For the E2 ablation, use the cross-fitted readers' top-k on the held-out fold (§5.2) instead. In both cases add the gold span if missing, plus boundary variants (±1 word at either end, valid only), plus siblings (§3.5) if `sibling_negatives: true`. Deduplicate.
 - **Inference:** the reader's top-k.
-- **Loss:** listwise. Softmax over a question's candidate scores; F1-soft target over the candidates (same α, τ form as §4.3); cross-entropy.
+- **Loss:** listwise. Softmax over a question's candidate scores; F1-soft target over the candidates (same α, τ form and the same `f1_target` as §4.3); cross-entropy.
 - **Unanswerable negatives** (`unanswerable_negatives: true`, row 5): append a null candidate with a fixed score of 0 to every training question's list. Answerable questions give it target 0; the unanswerable questions of §3.6 put all target mass on it. Inference never adds the null candidate.
 - Track **top-k recall** (fraction of questions whose gold span is among the candidates). It caps verifier accuracy.
 
