@@ -101,6 +101,7 @@ Mistakes assistants made in this project, kept so nobody repeats them. Add to th
 - **GitHub closing keywords work anywhere in a PR body,** even mid-sentence: "#21's PR closes #22" linked #22 for closing. After editing a body, check `gh pr view <n> --json closingIssuesReferences`.
 - **Verify spec claims against a primary source or the data before writing them.** Three spec statements were wrong and caught later: the Adversarial SQuAD grouping (checked against the authors' `eval_squad.py`), the validation-split size (count it), and pooling of spans without content words.
 - **The spec and the plan move together.** When a number or rule changes in the spec, search the plan for it too. A plan version bump touches the title line, the page header (`word/header1.xml`) and the change log; the header was once left at an old version.
+- **Load large checkpoints into CPU memory:** `torch.load(path, map_location="cpu")`, then `load_state_dict` copies them to the GPU. Loading a 5.2 GB checkpoint straight onto an A100-40 fragmented memory and caused out-of-memory retries (2026-10-04).
 - **Check end-to-end invariants, not only local ones.** Checking that tokens lie inside words missed that `return_overflowing_tokens` (tokenizers 0.23) drops the end of long passages; check that every passage token reaches some window (spec §3.3).
 - **Tool gotchas:**
   - transformers 5 removed `build_inputs_with_special_tokens`; use `squadqa.data.pair_layout`.
