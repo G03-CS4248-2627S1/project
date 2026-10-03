@@ -17,10 +17,10 @@ Each teammate has a gitignored `local/` folder. Its `local/MEMORY.md` holds what
 
 **Session workflow:**
 1. Run `git pull` and read `local/MEMORY.md`.
-2. Work on a branch named `<name>/<topic>` and open a PR into `main`.
+2. Work on a branch named `<name>/<topic>`, made from an up-to-date `main`, and open a PR when workflow.md §4.2 says to.
 3. Before stopping, update `local/MEMORY.md` and push the branch.
 
-README.md, "Team workflow", has the full version, including how experiments move from config to committed results.
+workflow.md has the full version: issues, when to open a PR, review, and how experiments move from config to committed results (§5).
 
 ## Spec documents
 
@@ -48,7 +48,7 @@ README.md, "Team workflow", has the full version, including how experiments move
   - Per-device batch size is a command-line flag. Gradient accumulation is adjusted so the effective batch size stays fixed.
 - **`results/<run_id>/`**, where `run_id` = `<date>-<experiment>-s<seed>-j<Slurm job id>` (use a timestamp in place of the job id for local runs):
   - Slurm job ids are unique across the cluster, so run ids never collide between teammates, and tracked paths contain no personal ids.
-  - Commit the run's config, metrics and dev predictions.
+  - Commit the run's resolved config, commit hash, seed, metrics and validation predictions. Dev and robustness predictions come only from the stage-5 final scoring (workflow.md §6.1).
   - Checkpoints go under `$SQUADQA_SCRATCH`, never in the repo.
 - **`tests/reference/`** holds reference tests written or reviewed by a human.
   - Claude Code asks before editing them, and edits to `qa/evaluate-v2.0.py` are denied (see `.claude/settings.json`).

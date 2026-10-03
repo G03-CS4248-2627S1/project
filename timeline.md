@@ -2,7 +2,7 @@
 
 When each part of the project happens, what blocks what, and what to cut if we fall behind.
 
-- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.0). **How:** [implementation_details.md](implementation_details.md). **When:** this file.
+- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.0). **How:** [implementation_details.md](implementation_details.md). **When:** this file. **How we work:** [workflow.md](workflow.md).
 - This file expands plan §9 into stages. The plan's W1–W7 are course weeks 7–13. Section numbers below (§4.3, E3, …) refer to the plan.
 - If this file and the plan disagree on scope, stop and ask a human.
 - Drafted 2026-09-28 (week 7). Moved to the submitted proposal's schedule on 2026-10-03 (plan v1.0). Whoever changes a milestone or a stage's scope updates this file and tells the team.
@@ -80,7 +80,7 @@ Critical-path jobs (2.5 → 3.4 → 4.1 → 4.4) get GPU priority over developme
 
 ### 3.3 Work that can start now
 
-None of these waits for a result. All of them can be built against the baseline:
+None of these waits for a result. All of them can be built against the baseline. Each becomes a GitHub issue with an owner at the week-8 kickoff (workflow.md §3), and the code goes in the modules listed in workflow.md §2.1:
 
 | Work | Needs |
 |---|---|
@@ -112,7 +112,7 @@ These wait on a result, but are short and off the critical path:
 **Goal:** everyone set up, and a proper pipeline with a baseline trained in it.
 
 - **1.1 Proposal.** Submitted Fri 2 Oct.
-- **1.2 Team setup (all members).** Repository, environment and cluster smoke test, through the onboarding in `local.example/README.md`.
+- **1.2 Team setup (all members).** GitHub access, repository, environment and cluster smoke test, through the onboarding in `local.example/README.md`. Stage issues and milestones are set up at the kickoff (workflow.md §3).
 - **1.3 Data pipeline.** 384-token windows with stride 128; offset map between characters, subword tokens and words; dynamic padding and length bucketing (spec §3.2–3.4). The offset unit test must pass before any training.
 - **1.4 Evaluation pipeline.** Model outputs → top span → `predictions.json` → official scorer. Windows of one passage share a softmax. Includes Adversarial SQuAD (worst-case score, spec §6) and SQuAD-Shifts, both from `download_external`.
 - **1.5 Hyperparameter tuning and baseline (ladder row 0).** Base for development, large for results. Start the 3 large seeds.
@@ -132,7 +132,7 @@ These wait on a result, but are short and off the critical path:
 - **2.2 F1-weighted targets** (plan §4.4), against the baseline on base. Sweep α (the F1:EM loss ratio) and τ.
 - **2.3 Combine** the two only if both beat the baseline on the validation split. Otherwise keep the one that does, and report the other as an ablation.
 - **2.4 Rerun E3 on the new head.** The before-and-after comparison is the E3 result.
-- **2.5 Freeze the reader** (Thu 15 Oct). Launch ladder rows 1–2 on large, 3 seeds.
+- **2.5 Freeze the reader** (Thu 15 Oct) through a freeze PR (workflow.md §5.3). Then launch ladder rows 1–2 on large, 3 seeds, from `main`.
 - **2.6 Report and slides** draft the model and data choices.
 - **2.7 Verifier groundwork,** off the critical path: marking code and test V5, both backbones loading, a first run on baseline candidates.
 
@@ -159,7 +159,7 @@ These wait on a result, but are short and off the critical path:
 - **4.1 Training.** On the sampled candidates, base first, then large. The spec §5.7 acceptance tests for the variant must pass first.
 - **4.2 Combining.** Reader log-probability + λ × verifier score, softmax over candidates, recalibrate, decode. Tune λ on the validation split.
 - **4.3 E2.** Shared vs. separate; listwise vs. pointwise; in-sample (sampled) vs. cross-fitted candidates; fix types (boundary fix vs. switch to a different answer).
-- **4.4 Freeze the better variant** (Thu 29 Oct). Launch ladder row 4 on large, 3 seeds.
+- **4.4 Freeze the better variant** (Thu 29 Oct) through a freeze PR. Then launch ladder row 4 on large, 3 seeds, from `main`.
 - **4.5 Row 5 verifier.** The frozen variant, trained with the SQuAD 2.0 unanswerable negatives (spec §5.1), on top of the row 5 reader.
 
 **Done when:** row 4 is trained and row 5 is running. **Fallback:** drop the cross-fitting ablation before either variant.
@@ -169,7 +169,7 @@ These wait on a result, but are short and off the critical path:
 **Goal:** the paper's numbers, and the paper. Experiments stop at the milestone.
 
 - **5.1 Final ablations and full-system runs;** leftover seeds, mostly the verifier's.
-- **5.2 Score all frozen systems** on dev, Adversarial SQuAD and SQuAD-Shifts with the official scorer. This is the first time dev is used.
+- **5.2 Score all frozen systems** on dev, Adversarial SQuAD and SQuAD-Shifts with the official scorer: one person, one PR, from `main` (workflow.md §6.1). This is the first time dev is used.
 - **5.3 Statistics.** Mean ± standard deviation over 3 seeds; paired bootstrap tests with 95% confidence intervals (SciPy).
 - **5.4 Analysis.** Final E3 numbers, verifier fix types, ECE, worked error examples for the paper and video.
 - **5.5 P2 extras if time allows:** augmentation, sibling negatives, each data source on its own.
