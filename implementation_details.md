@@ -202,12 +202,12 @@ loss = -torch.where(target > 0, target * logp, torch.zeros_like(logp)).sum(-1).m
 ### 4.4 Decoding
 - `topk` over flattened scores (k = 10) → (i, j) → characters `(word_start[i], word_end[j])` → answer = `context[a:b]`.
 - **Group boundary variants** (`mbr_utility: normalized`, the default): spans that cover the same content words at the same positions (§4.3; "the Eiffel Tower" and "Eiffel Tower") are one answer, so add up their probabilities. The same text elsewhere in the passage stays a separate answer (rule 4).
-- **MAP** = the most probable group, returning its most probable span (top-1 span when `mbr_utility: positional`).
+- **MAP** = the most probable group, returning its most probable span (top-1 span when `mbr_utility: positional`). Groups and their probabilities are formed among the top-k candidates, under the full softmax.
 - **MBR:** after calibration, among the top-k pick `argmax_y Σ_y' p(y') · [F1(y, y') + γ · EM(y, y')]`.
   - With `normalized`, y ranges over groups, and F1 and EM are the content-word versions from §4.3 (EM = 1 when two spans cover the same content words). Return the group's most probable span.
   - With `positional` (an E1 row), F1 is positional word F1 and EM(y, y') = 1 if the spans are identical.
   - γ = `mbr_em_weight` (the proposal's F1:EM ratio), tuned on the validation split. γ = 0 is expected F1; a large γ approaches MAP.
-- **Calibration:** fit one temperature T on the validation split (minimize the NLL of the gold span).
+- **Calibration:** fit one temperature T on the validation split (minimize the NLL of the gold span). Questions whose answer is not a valid span (not word-aligned, or over 30 words) are left out of the fit and counted in `calibration.json`.
 
 ### 4.5 Diagnostics
 - **Cross-span mass** (plan E3; also the W2 early check on the joint head):
