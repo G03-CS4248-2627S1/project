@@ -13,7 +13,8 @@
   results/<run_id>/ (squadqa.predict, squadqa.evaluate).
 
 --max-steps and --stop-after are for smoke runs (spec §9): --max-steps shortens the schedule,
---stop-after exits after that step without predicting, as if the job had been killed.
+--stop-after exits after that step without predicting, as if the job had been killed; resume
+with the same arguments minus --stop-after (it is not part of the config, so the resume check passes).
 """
 
 import argparse
@@ -72,8 +73,11 @@ def save_checkpoint(path: Path, model, opt, sched, step: int) -> None:
     tmp.replace(path)
 
 
-def load_checkpoint(path: Path, model, opt=None, sched=None, device="cpu") -> int:
-    ck = torch.load(path, map_location=device, weights_only=False)
+def load_checkpoint(path: Path, model, opt=None, sched=None) -> int:
+    """Load into CPU memory first; load_state_dict copies onto the model's device. Loading the
+    5.2 GB checkpoint straight onto the GPU fragmented memory and caused out-of-memory retries
+    on an A100-40 (smoke run, 2026-10-04)."""
+    ck = torch.load(path, map_location="cpu", weights_only=False)
     model.load_state_dict(ck["model"])
     if opt is not None:
         opt.load_state_dict(ck["opt"])
@@ -94,7 +98,7 @@ def train(model, feats: D.Features, cfg: dict, seed: int, pad_id: int, ckpt_path
     opt, sched = build_optimizer(model, cfg, total_steps)
     step = 0
     if ckpt_path.exists():
-        step = load_checkpoint(ckpt_path, model, opt, sched, device)
+        step = load_checkpoint(ckpt_path, model, opt, sched)
         log(f"resumed from step {step}")
     check_fp32(model, opt)
     use_amp = device.startswith("cuda")
@@ -167,9 +171,15 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     from squadqa.predict import predict_validation
+    peak_train = torch.cuda.max_memory_allocated() / 2**30 if device == "cuda" else 0.0
+    if device == "cuda":
+        torch.cuda.empty_cache()                        # the optimizer is gone; release its cached blocks
+        torch.cuda.reset_peak_memory_stats()
     metrics = predict_validation(model, tok, cfg, run_dir, device)
+    peak_predict = torch.cuda.max_memory_allocated() / 2**30 if device == "cuda" else 0.0
     metrics.update({"steps": result["steps"], "train_minutes_last_job": round(result["minutes"], 1), "gpu": gpu,
-                    "per_device_batch": args.per_device_batch})
+                    "per_device_batch": args.per_device_batch,
+                    "peak_gpu_gb": {"train": round(peak_train, 1), "predict": round(peak_predict, 1)}})
     C.write_json(run_dir / "metrics.json", metrics)
     print("RESULT", {k: metrics[k] for k in ("validation", "steps")}, flush=True)
 

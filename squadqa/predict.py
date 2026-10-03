@@ -157,7 +157,7 @@ def main(argv: list[str] | None = None) -> None:
     device = "cuda" if torch.cuda.is_available() else "cpu"
     tok = load_tokenizer(cfg["model"])
     model = Reader(load_encoder(cfg["model"]), cfg).to(device)
-    step = load_checkpoint(Path(env("SQUADQA_SCRATCH")) / "runs" / args.run_id / CHECKPOINT, model, device=device)
+    step = load_checkpoint(Path(env("SQUADQA_SCRATCH")) / "runs" / args.run_id / CHECKPOINT, model)
     if args.eval_set == "validation":
         out = predict_split(model, tok, cfg, run_dir, device, "validation", load_split("validation"), dataset,
                             batch_size=args.batch_size)
