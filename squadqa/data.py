@@ -192,9 +192,10 @@ def window_ranges(n_tokens: int, budget: int, stride: int) -> list[tuple[int, in
     """[start, end) passage-token ranges of at most `budget` tokens, consecutive ones overlapping
     by `stride` tokens, together covering the whole passage.
 
-    Built here rather than by the tokenizer's return_overflowing_tokens: tokenizers 0.23.2
-    returns at most two windows for a (question, passage) pair, so the end of a long passage
-    is lost (528 train and 146 dev questions; checked 2026-10-04).
+    Built here rather than by the tokenizer's return_overflowing_tokens: tokenizers 0.23
+    (every release through 0.23.2; 0.22.2 is correct) returns at most two windows for a
+    (question, passage) pair, so the end of a long passage is lost (528 train and 146 dev
+    questions; checked 2026-10-04).
     """
     if budget <= stride:
         raise ValueError(f"window budget {budget} must exceed the stride {stride}")

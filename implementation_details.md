@@ -101,7 +101,7 @@ def word_spans(text: str) -> list[tuple[int, int]]:
 
 ### 3.3 Words ↔ subword tokens
 - Tokenize each passage once on its own with the fast tokenizer (`return_offsets_mapping=True`), and each question on its own. A window is `[CLS] question [SEP] passage tokens [SEP]`, at most 384 tokens; consecutive windows overlap by 128 passage tokens and together cover the whole passage (`squadqa.data.make_windows`).
-- **Do not use `return_overflowing_tokens`.** tokenizers 0.23.2 returns at most two windows per (question, passage) pair and sometimes cuts the second short, so the end of the passage is lost for 528 train, 57 validation and 146 dev questions (checked 2026-10-04). Where the library covers the whole passage, our windows are identical to its windows (`tests/test_data.py`).
+- **Do not use `return_overflowing_tokens`.** tokenizers 0.23 (every release through 0.23.2; 0.22.2 is correct) returns at most two windows per (question, passage) pair and sometimes cuts the second short, so the end of the passage is lost for 528 train, 57 validation and 146 dev questions (checked 2026-10-04). Where the library covers the whole passage, our windows are identical to its windows (`tests/test_data.py`).
 - For each passage word in a window:
   - `first_tok[w]` = first subword token whose character span lies inside the word;
   - `last_tok[w]` = last such token.
