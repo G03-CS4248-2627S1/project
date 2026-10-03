@@ -24,4 +24,8 @@ Find out what you can by exploring, and ask only for what you can't discover.
 7. **Set up the cluster clone** (README.md, "One-time setup on the cluster"): install uv, clone over HTTPS with a stored GitHub token, create the cluster `.env`, run `soc.sh sync`, then download the model and datasets.
    - Check what already exists before redoing anything, for example `soc.sh run 'git config --get credential.helper; ls .venv/bin/python data/external'`, and record each item under "Cluster status". Ask before submitting the smoke test (`soc.sh submit slurm/smoke_test.sbatch`), then fetch its result with `soc.sh fetch`.
 8. **Create `sandbox/<name>/`** for the user's scratch work.
-9. **Record what's done** under "Cluster status" and anything unfinished under "Open threads", with dates.
+9. **Check GitHub access and introduce the workflow.**
+   - Check that the user can push to the repository (`gh auth status`, then `git push --dry-run origin HEAD`). If not, ask them to get a teammate with admin rights to add them as a collaborator.
+   - Run `uv run pytest` once, so the user knows the check every PR needs.
+   - Walk the user through workflow.md: branches, when to open a PR, issues and the stage milestones.
+10. **Record what's done** under "Cluster status" and anything unfinished under "Open threads", with dates.

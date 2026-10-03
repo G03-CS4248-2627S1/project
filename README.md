@@ -88,25 +88,27 @@ Run the script without arguments to list its commands.
 
 ## Team workflow
 
+The full workflow (where code goes, issues, branches, when to open a PR, review, experiments and stage freezes) is in [workflow.md](workflow.md). This section is the short version.
+
 Every teammate works with an AI assistant. Each person's assistant keeps a personal memory in `local/MEMORY.md`, which is gitignored. On your first session, the assistant sets up `local/` by following `local.example/README.md`.
 
 **Each session**
 
 1. Run `git pull`. Your assistant reads AGENTS.md and your `local/MEMORY.md`.
 2. For cluster work, connect to the NUS Cisco VPN, then run `bash .claude/skills/soc-cluster/soc.sh connect` in a Git Bash terminal.
-3. Work on a branch named `<name>/<topic>`.
+3. Work on a branch named `<name>/<topic>`, made from an up-to-date `main`, one topic per branch.
 4. Before you stop, your assistant updates `local/MEMORY.md`, and you push your branch.
 
 **Running an experiment**
 
-1. Add or edit a config in `configs/experiments/` along with the code it needs, then commit and push. Each run records the commit it came from.
+1. Open an issue for it, then add or edit a config in `configs/experiments/` along with the code it needs, and commit and push. Each run records the commit it came from. Development runs use base, 1 seed and the validation split; final ladder runs use large, 3 seeds, launched from `main` (workflow.md §5).
 2. On the cluster, run `git pull`. If `pyproject.toml` or `uv.lock` changed, also run `soc.sh sync`.
 3. Write the job script from `slurm/template.sbatch`, then submit it with `soc.sh submit slurm/<name>.sbatch` (AGENTS.md, "Submitting jobs"). It refuses if the cluster clone isn't at your commit. Use the `gpu` partition (up to 3 hours) or `gpu-long` (up to 3 days). Checkpoints go to `$SQUADQA_SCRATCH`.
-4. Run `soc.sh fetch <run_id>`, then commit `results/<run_id>/` on the same branch as the code that produced it.
+4. Run `soc.sh fetch <run_id>`, commit `results/<run_id>/` on the same branch as the code that produced it, and open a PR with the code, config and results together.
 
 **Merging and sharing**
 
-- **Pull requests:** open a PR into `main` and have a teammate review it. Roles are flexible, so ask whoever knows that area best. Keep `main` runnable.
+- **Pull requests:** open a PR into `main` and have a teammate review it, then squash and merge and delete the branch. Roles are flexible, so ask whoever knows that area best. Keep `main` runnable. Never push to `main` directly.
 - **Headline numbers:** they come only from code on `main` whose results are committed.
 - **Dependencies:** edit `pyproject.toml`, run `uv lock`, and pass the smoke test on the cluster before committing `uv.lock`. Everyone then runs `uv sync` locally and `soc.sh sync` for the cluster.
 - **Shared knowledge,** such as a cluster quirk, goes into AGENTS.md through a PR. Personal notes stay in `local/MEMORY.md`.
@@ -131,6 +133,6 @@ uv run python qa/evaluate-v2.0.py qa/dev-v1.1.json predictions.json
 | `squadqa/` | Project code, one module per component |
 | `slurm/` | Job scripts for the SoC cluster |
 | `tests/` | Tests. `tests/reference/` holds human-written or human-reviewed reference tests. |
-| `results/<run_id>/` | Config, metrics and dev predictions for each run (committed) |
+| `results/<run_id>/` | Config, metrics and validation predictions for each run (committed); dev predictions only from the stage-5 final scoring |
 | `sandbox/<name>/` | Personal notebooks and scratch work |
 | `local/` | Your assistant's personal memory (gitignored); the template and first-session guide are in `local.example/` |
