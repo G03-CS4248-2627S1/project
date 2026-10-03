@@ -270,6 +270,10 @@ Not the default: the default candidates are sampled from the final reader (§5.1
   - *Answer switch:* the answers do not overlap.
 - Report per-seed results, mean ± std over 3 seeds, and paired bootstrap 95% confidence intervals for headline differences.
 - Score every frozen system on dev, Adversarial SQuAD (AddSent, AddOneSent) and the four SQuAD-Shifts sets, and report each separately.
+- **Adversarial SQuAD** (`data/external/adversarial_squad/`): each file holds 1,000 dev-v1.1 questions unchanged plus adversarial versions whose ids add a suffix (`-high-conf-turk0`, …).
+  - Main number, Jia & Liang's adversarial score: for each original id, take the worst EM and the worst F1 over the questions sharing that id prefix (the original and its versions), then average over the 1,000 originals. Check the grouping against the authors' evaluation script on their CodaLab worksheet before reporting.
+  - Get per-question EM and F1 from the official scorer's own `get_raw_scores` (load `qa/evaluate-v2.0.py` with `importlib`); only the grouping is ours (rule 5).
+  - Also report the scorer's plain average over all questions in the file, which many papers quote instead.
 
 ---
 

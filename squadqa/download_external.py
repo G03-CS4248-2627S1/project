@@ -17,6 +17,8 @@ copy is kept):
   an earlier file of CLEANED below, or earlier in the same file. The qa/ files
   are only read, never changed. SQuAD 2.0 train shrinks to the questions that
   v1.1 train does not already have, which are the unanswerable ones.
+- Adversarial SQuAD is checked only within each file: it repeats dev-v1.1 on
+  purpose (see below).
 - Paraphrased SQuAD is checked only within each file. Its *_orig files are the
   dev-v1.1 questions lowercased, kept on purpose as the like-for-like baseline
   for *_para. Para and orig are paired by article title (one question each);
@@ -36,11 +38,17 @@ course files on 2026-09-24:
 |                          |               | (spec §1 rules 1-2)                      |
 | squadshifts/             | new text      | evaluation only                          |
 | paraphrased_squad/       | dev-v1.1      | evaluation only                          |
+| adversarial_squad/       | dev-v1.1      | evaluation only                          |
 
 AdversarialQA is kept as its combined/ split (the union of the dbidaf, dbert
 and droberta subsets). Its test.json files have no answers and its
 squad_splits/ is dev-v1.1 re-split, so neither is kept. SQuAD 2.0 dev is not
 downloaded: it comes from the dev-v1.1 articles.
+
+Adversarial SQuAD (Jia & Liang, 2017) has AddSent and AddOneSent. Each file
+holds 1,000 dev-v1.1 questions unchanged (same id and passage) plus adversarial
+versions of them, whose ids add a suffix such as "-high-conf-turk0" and whose
+passages have one distracting sentence added. Score as in implementation_details.md §6.
 """
 
 import hashlib
@@ -57,6 +65,7 @@ REFERENCE = ["qa/train-v1.1.json", "qa/dev-v1.1.json"]
 
 SHIFTS = "https://raw.githubusercontent.com/modestyachts/squadshifts-website/077771091a3993f5310cabc98f24a41d067c36cf/datasets"
 PARA = "https://raw.githubusercontent.com/nusnlp/paraphrasing-squad/860c4924d7746e17294eae548776e882f9bf52dd/datasets"
+CODALAB = "https://worksheets.codalab.org/rest/bundles"   # bundles are immutable
 
 # (destination under OUT, url, sha256 of the downloaded bytes)
 JSON_FILES = [
@@ -82,6 +91,11 @@ JSON_FILES = [
      "eefc9f44a67d55546a9a2f320467c67e271b85885608eabe8944b5d209560652"),
     ("paraphrased_squad/adv_orig.json", f"{PARA}/adv_orig.json",
      "dc2d3a5e01fe8424d6204bf401c5aad39f60f269f04599d75679f53251e75c40"),
+    # Adversarial SQuAD (Jia & Liang, 2017), the authors' CodaLab release
+    ("adversarial_squad/addsent.json", f"{CODALAB}/0xb765680b60c64d088f5daccac08b3905/contents/blob/",
+     "40e3602aa5195cdacd03904a9c301ceb17ccf730cc32bd3ab998b66b4401e660"),
+    ("adversarial_squad/addonesent.json", f"{CODALAB}/0x3ac9349d16ba4e7bb9b5920e3b1af393/contents/blob/",
+     "50420ac8d8b7547cd3715347c9a276802bc9466328ba0814adce4c20495e2889"),
 ]
 
 # AdversarialQA (Bartolo et al., 2020): one zip, keep the combined split.
@@ -94,6 +108,8 @@ AQA_MEMBERS = {"combined/train.json": "adversarialqa/train.json",
 CLEANED = ["squad2/train-v2.0.json", "adversarialqa/train.json", "adversarialqa/dev.json",
            "squadshifts/new_wiki.json", "squadshifts/nyt.json",
            "squadshifts/reddit.json", "squadshifts/amazon_reviews.json"]
+# Checked only within each file, because they repeat dev-v1.1 on purpose.
+WITHIN_FILE = ["adversarial_squad/addsent.json", "adversarial_squad/addonesent.json"]
 PARA_PAIRS = [("paraphrased_squad/dev_para.json", "paraphrased_squad/dev_orig.json"),
               ("paraphrased_squad/adv_para.json", "paraphrased_squad/adv_orig.json")]
 
@@ -138,6 +154,14 @@ def remove_duplicates(files: dict[str, dict]) -> dict:
         before = sum(1 for _ in iter_qas(data))
         answers = dedupe_answers(data)
         dups = find_duplicate_questions(rel, data, seen)
+        remove_questions(data, {d["index"] for d in dups})
+        record(rel, dups, answers, before)
+
+    for rel in WITHIN_FILE:
+        data = files[rel]
+        before = sum(1 for _ in iter_qas(data))
+        answers = dedupe_answers(data)
+        dups = find_duplicate_questions(rel, data, Seen())
         remove_questions(data, {d["index"] for d in dups})
         record(rel, dups, answers, before)
 

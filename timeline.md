@@ -87,7 +87,7 @@ None of these waits for a result. All of them can be built against the baseline:
 | Compound-objective and F1-target loss code | Baseline code |
 | Cross-span diagnostic (E3) | Baseline predictions |
 | Calibration and MBR decoding code (F1 + γ·EM) | Baseline span probabilities; retuned later |
-| Adversarial SQuAD and SQuAD-Shifts evaluation. Adversarial SQuAD (AddSent, AddOneSent) is **not yet in `download_external`**; add it | Nothing |
+| Adversarial SQuAD (worst-case score, spec §6) and SQuAD-Shifts evaluation | Nothing |
 | Bootstrap test script | Nothing |
 | Pins for `deberta-v3-base` and ModernBERT-large; `peft` and `scipy` in `pyproject.toml` (with `uv lock` and the cluster smoke test) | Nothing |
 | Verifier marking code and acceptance test V5, for both tokenizers | Baseline candidates |
@@ -114,7 +114,7 @@ These wait on a result, but are short and off the critical path:
 - **1.1 Proposal.** Submitted Fri 2 Oct.
 - **1.2 Team setup (all members).** Repository, environment and cluster smoke test, through the onboarding in `local.example/README.md`.
 - **1.3 Data pipeline.** 384-token windows with stride 128; offset map between characters, subword tokens and words; dynamic padding and length bucketing (spec §3.2–3.4). The offset unit test must pass before any training.
-- **1.4 Evaluation pipeline.** Model outputs → top span → `predictions.json` → official scorer. Windows of one passage share a softmax. Includes Adversarial SQuAD (to be added to `download_external`) and SQuAD-Shifts.
+- **1.4 Evaluation pipeline.** Model outputs → top span → `predictions.json` → official scorer. Windows of one passage share a softmax. Includes Adversarial SQuAD (worst-case score, spec §6) and SQuAD-Shifts, both from `download_external`.
 - **1.5 Hyperparameter tuning and baseline (ladder row 0).** Base for development, large for results. Start the 3 large seeds.
 - **1.6 First decoding comparison.** MAP vs. MBR on the baseline (plan §4.5).
 - **1.7 Cross-span diagnostic (E3) on the baseline.** It decides how much effort the joint head deserves (plan §4.3; recipe in spec §4.5).
