@@ -7,7 +7,7 @@ Group G03's CS4248 final project: an extractive question answering system on SQu
 - Schedule (when): [timeline.md](timeline.md): stages, freeze dates and what blocks what
 - Guidance for coding agents: [AGENTS.md](AGENTS.md)
 
-**Status:** repository skeleton only. There is no model code yet.
+**Status:** the data pipeline, evaluation, decoding and their tests are on `main`; the reader and the rest of the method are in progress (see the GitHub milestones).
 
 ## Setup
 
