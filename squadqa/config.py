@@ -22,6 +22,7 @@ import argparse
 import json
 import os
 import random
+import re
 import socket
 import subprocess
 from datetime import datetime
@@ -46,8 +47,21 @@ def _merge(base: dict, override: dict, where: str = "") -> dict:
                 raise TypeError(f"config key {name!r} is a section in {BASE}; set its keys, not a value")
             out[key] = _merge(base[key], value, f"{name}.")
         else:
+            _check_type(name, base[key], value)
             out[key] = value
     return out
+
+
+def _check_type(name: str, base, value) -> None:
+    """A key keeps the type it has in base.yaml (an int may stand for a float; null takes anything)."""
+    same_kind = isinstance(value, bool) == isinstance(base, bool)          # True is an int in Python
+    if base is None or (same_kind and (isinstance(value, type(base)) or (isinstance(base, float) and isinstance(value, int)))):
+        return
+    hint = " (YAML reads 3e-5 as a string; write 3.0e-5)" if isinstance(base, float) and isinstance(value, str) else ""
+    raise TypeError(f"config key {name!r} is {type(base).__name__} in {BASE}, got {value!r}{hint}")
+
+
+_NUMBER = re.compile(r"[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?")
 
 
 def parse_override(item: str) -> dict:
@@ -60,7 +74,10 @@ def parse_override(item: str) -> dict:
     *parents, leaf = key.split(".")
     for part in parents:
         node = node.setdefault(part, {})
-    node[leaf] = yaml.safe_load(value)
+    parsed = yaml.safe_load(value)
+    if isinstance(parsed, str) and _NUMBER.fullmatch(parsed):
+        parsed = float(parsed)                  # YAML 1.1 reads 3e-5 as a string
+    node[leaf] = parsed
     return nested
 
 

@@ -1,0 +1,178 @@
+"""Train a reader from a config, then predict and score the validation split (spec §4, §9).
+
+    python -m squadqa.train_reader --config configs/experiments/row0-baseline.yaml --seed 0 \
+        [--run-id ID] [--set train.lr=3e-5] [--per-device-batch 16] [--max-steps N] [--stop-after N]
+
+- fp32 master weights, gradients and AdamW state; bf16 autocast on the GPU. Raises if a trainable
+  parameter or optimizer state is not fp32, after loading and at every checkpoint (spec §9).
+- Effective batch cfg["train"]["effective_batch"] questions per optimizer step (all their
+  windows); --per-device-batch questions per forward pass, with gradient accumulation between.
+- Checkpoints to $SQUADQA_SCRATCH/runs/<run_id>/checkpoint.pt every cfg["train"]["checkpoint_every"]
+  steps and at the end. Re-running with the same run id resumes from it (spec rule 8).
+- Then writes validation predictions, candidates, calibration and metrics.json to
+  results/<run_id>/ (squadqa.predict, squadqa.evaluate).
+
+--max-steps and --stop-after are for smoke runs (spec §9): --max-steps shortens the schedule,
+--stop-after exits after that step without predicting, as if the job had been killed.
+"""
+
+import argparse
+import os
+import time
+from pathlib import Path
+
+os.environ.setdefault("HF_HUB_OFFLINE", "1")        # pinned files from $HF_HOME only, never the network
+
+import torch
+
+from squadqa import config as C
+from squadqa import data as D
+
+CHECKPOINT = "checkpoint.pt"
+
+
+def load_encoder(name: str, dtype=torch.float32):
+    """The pinned pretrained encoder, loaded with an explicit dtype (transformers 5 otherwise
+    keeps the stored one, fp16 for deberta-v3-large)."""
+    from transformers import AutoModel
+
+    from squadqa.download_model import MODELS
+    C.env("HF_HOME")
+    if name not in MODELS:
+        raise KeyError(f"{name} is not pinned; add it to squadqa/download_model.py first (spec §9)")
+    return AutoModel.from_pretrained(name, revision=MODELS[name]["revision"], dtype=dtype)
+
+
+def build_optimizer(model, cfg: dict, total_steps: int):
+    from transformers import get_linear_schedule_with_warmup
+
+    t = cfg["train"]
+    no_decay = lambda n: n.endswith("bias") or "LayerNorm" in n or "layernorm" in n
+    params = [(n, p) for n, p in model.named_parameters() if p.requires_grad]
+    opt = torch.optim.AdamW([
+        {"params": [p for n, p in params if not no_decay(n)], "weight_decay": t["weight_decay"]},
+        {"params": [p for n, p in params if no_decay(n)], "weight_decay": 0.0},
+    ], lr=t["lr"], fused=torch.cuda.is_available())
+    sched = get_linear_schedule_with_warmup(opt, int(t["warmup_frac"] * total_steps), total_steps)
+    return opt, sched
+
+
+def check_fp32(model, opt) -> None:
+    """Raise unless every trainable parameter and every optimizer state tensor is fp32 (spec §9)."""
+    dtypes = {p.dtype for p in model.parameters() if p.requires_grad}
+    dtypes |= {v.dtype for s in opt.state.values() for v in s.values() if torch.is_tensor(v) and v.dim() > 0}
+    if dtypes != {torch.float32}:
+        raise RuntimeError(f"expected fp32 parameters and optimizer state, got {sorted(map(str, dtypes))}")
+
+
+def save_checkpoint(path: Path, model, opt, sched, step: int) -> None:
+    check_fp32(model, opt)
+    tmp = path.with_suffix(".tmp")
+    torch.save({"model": model.state_dict(), "opt": opt.state_dict(), "sched": sched.state_dict(), "step": step}, tmp)
+    tmp.replace(path)
+
+
+def load_checkpoint(path: Path, model, opt=None, sched=None, device="cpu") -> int:
+    ck = torch.load(path, map_location=device, weights_only=False)
+    model.load_state_dict(ck["model"])
+    if opt is not None:
+        opt.load_state_dict(ck["opt"])
+        sched.load_state_dict(ck["sched"])
+    return ck["step"]
+
+
+def micro_batches(example_ids: list[int], per_device: int) -> list[list[int]]:
+    return [example_ids[k:k + per_device] for k in range(0, len(example_ids), per_device)]
+
+
+def train(model, feats: D.Features, cfg: dict, seed: int, pad_id: int, ckpt_path: Path, per_device: int,
+          device: str, max_steps: int | None = None, stop_after: int | None = None, log=print) -> dict:
+    """Train with resume from ckpt_path. Returns {"steps", "stopped_early", "losses", "minutes"}."""
+    t = cfg["train"]
+    n_batches = len(D.bucket_batches(feats.question_lengths(), t["effective_batch"], seed, 0))
+    total_steps = max_steps or n_batches * t["epochs"]
+    opt, sched = build_optimizer(model, cfg, total_steps)
+    step = 0
+    if ckpt_path.exists():
+        step = load_checkpoint(ckpt_path, model, opt, sched, device)
+        log(f"resumed from step {step}")
+    check_fp32(model, opt)
+    use_amp = device.startswith("cuda")
+    lengths = feats.question_lengths()
+    model.train()
+    losses, window_sum, loss_sum, loss_n, t0 = [], 0, 0.0, 0, time.time()
+    batches, batches_epoch = None, -1
+    while step < total_steps:
+        epoch, pos = divmod(step, n_batches)
+        if epoch != batches_epoch:
+            batches, batches_epoch = D.bucket_batches(lengths, t["effective_batch"], seed, epoch), epoch
+        batch_ids = batches[pos]
+        step_loss = 0.0
+        for ids in micro_batches(batch_ids, per_device):
+            rows = feats.batch(ids)
+            b = {k: v.to(device, non_blocking=True) for k, v in D.collate(rows, pad_id).items()}
+            with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
+                per_q = model.loss(b, len(ids))
+            (per_q.sum() / len(batch_ids)).backward()
+            step_loss += per_q.sum().item()
+            window_sum += len(rows)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), t["grad_clip"])
+        opt.step()
+        sched.step()
+        opt.zero_grad(set_to_none=True)
+        step += 1
+        loss_sum, loss_n = loss_sum + step_loss, loss_n + len(batch_ids)
+        losses.append(step_loss / len(batch_ids))
+        if step % 50 == 0 or step == total_steps or step == stop_after:
+            el = time.time() - t0
+            log(f"step {step}/{total_steps} loss {loss_sum / loss_n:.4f} lr {sched.get_last_lr()[0]:.2e} "
+                f"{window_sum / max(el, 1e-9):.1f} windows/s {el / 60:.1f} min")
+            loss_sum, loss_n = 0.0, 0
+        if step % t["checkpoint_every"] == 0 or step == total_steps:
+            save_checkpoint(ckpt_path, model, opt, sched, step)
+        if stop_after is not None and step >= stop_after and step < total_steps:
+            return {"steps": step, "stopped_early": True, "losses": losses, "minutes": (time.time() - t0) / 60}
+    return {"steps": step, "stopped_early": False, "losses": losses, "minutes": (time.time() - t0) / 60}
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Train a reader, then predict and score the validation split.")
+    C.add_run_args(parser)
+    parser.add_argument("--per-device-batch", type=int, default=16, help="questions per forward pass")
+    parser.add_argument("--max-steps", type=int, help="smoke runs: total optimizer steps instead of the epochs")
+    parser.add_argument("--stop-after", type=int, help="smoke runs: exit after this step without predicting")
+    args = parser.parse_args(argv)
+
+    cfg = C.load_config(args.config, args.set)
+    run_dir = C.start_run(cfg, args.config, args.seed, args.run_id)
+    ckpt_dir = Path(C.env("SQUADQA_SCRATCH")) / "runs" / run_dir.name
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    C.set_seed(args.seed)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    gpu = torch.cuda.get_device_name() if device == "cuda" else "cpu"
+    print(f"run {run_dir.name} on {gpu}; checkpoints in {ckpt_dir}", flush=True)
+
+    from squadqa.heads import Reader
+    tok = D.load_tokenizer(cfg["model"])
+    t0 = time.time()
+    feats = D.featurize(D.load_split("train", cfg["extra_train_data"]), tok, cfg, training=True)
+    print(f"{len(feats.examples)} training questions, {len(feats.windows)} windows, "
+          f"{len(feats.skipped)} skipped; featurized in {time.time() - t0:.0f} s", flush=True)
+    model = Reader(load_encoder(cfg["model"]), cfg).to(device)
+    result = train(model, feats, cfg, args.seed, tok.pad_token_id, ckpt_dir / CHECKPOINT, args.per_device_batch,
+                   device, args.max_steps, args.stop_after, log=lambda m: print(m, flush=True))
+    if result["stopped_early"]:
+        print(f"stopped after step {result['steps']} (--stop-after); rerun with --run-id {run_dir.name} to resume",
+              flush=True)
+        return
+
+    from squadqa.predict import predict_validation
+    metrics = predict_validation(model, tok, cfg, run_dir, device)
+    metrics.update({"steps": result["steps"], "train_minutes_last_job": round(result["minutes"], 1), "gpu": gpu,
+                    "per_device_batch": args.per_device_batch})
+    C.write_json(run_dir / "metrics.json", metrics)
+    print("RESULT", {k: metrics[k] for k in ("validation", "steps")}, flush=True)
+
+
+if __name__ == "__main__":
+    main()
