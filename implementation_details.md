@@ -182,7 +182,7 @@ target = (1 − α) · onehot(gold) + α · softmax over {F1 > 0} of (F1 / τ)  
 ```
 - `α` is the proposal's F1:EM loss ratio: the exact-match (one-hot) and F1-weighted parts are mixed `(1 − α) : α`.
 **Note: this F1 differs from the official scorer's.** The scorer normalizes both strings first: lowercase, delete ASCII punctuation, remove *a*/*an*/*the*, collapse whitespace (`normalize_answer` in `qa/evaluate-v2.0.py`). Here, punctuation words and articles count, so a leading "the" or a trailing "." costs about 0.2 F1 (gold "Eiffel Tower" vs. "the Eiffel Tower": 0.8 here, 1.0 official). This is part of the F1-weighted-target work (timeline 2.2), selected by `f1_target`, with an ablation of `positional` vs. `normalized` on base:
-- **`normalized`:** give each word a 0/1 flag (0 for punctuation words and articles; these are *content words* when 1) and count only content words in the overlap and lengths, with prefix sums, so it stays vectorized on the GPU. A span with no content words follows the scorer's empty-token rule. It is still positional: only words at the same positions overlap.
+- **`normalized`:** give each word a 0/1 flag (0 for punctuation words and articles; these are *content words* when 1) and count only content words in the overlap and lengths, with prefix sums, so it stays vectorized on the GPU. A span with no content words ("the", ".") matches only the identical span: the scorer would call any two such spans equal, but they sit at different positions (rule 4), and the scorer gives such a prediction 0 against any gold answer with content words (2 of 87,334 aligned train answers have none). It is still positional: only words at the same positions overlap.
 - **Boundary variants are exact matches:** a span that covers exactly the annotated answer's content words, differing only by leading or trailing articles or punctuation ("the Eiffel Tower" vs. "Eiffel Tower"), gets the same credit as the annotated span. The one-hot part of the target becomes uniform over these variants. They are found from the annotated span, so no string search is involved.
 - **The same text elsewhere in the passage gets no credit** (rule 4), whatever the scorer does. This is where `normalized` deliberately differs from the scorer, besides punctuation inside a word ("U.S." → "us", "well-known" → "wellknown") and the scorer's bag-of-tokens comparison.
 - The size of the gap is measured in week 8 (timeline 1.6); it bounds what `normalized` can gain.
@@ -202,12 +202,12 @@ loss = -torch.where(target > 0, target * logp, torch.zeros_like(logp)).sum(-1).m
 ### 4.4 Decoding
 - `topk` over flattened scores (k = 10) → (i, j) → characters `(word_start[i], word_end[j])` → answer = `context[a:b]`.
 - **Group boundary variants** (`mbr_utility: normalized`, the default): spans that cover the same content words at the same positions (§4.3; "the Eiffel Tower" and "Eiffel Tower") are one answer, so add up their probabilities. The same text elsewhere in the passage stays a separate answer (rule 4).
-- **MAP** = the most probable group, returning its most probable span (top-1 span when `mbr_utility: positional`).
+- **MAP** = the most probable group, returning its most probable span (top-1 span when `mbr_utility: positional`). Groups and their probabilities are formed among the top-k candidates, under the full softmax.
 - **MBR:** after calibration, among the top-k pick `argmax_y Σ_y' p(y') · [F1(y, y') + γ · EM(y, y')]`.
   - With `normalized`, y ranges over groups, and F1 and EM are the content-word versions from §4.3 (EM = 1 when two spans cover the same content words). Return the group's most probable span.
   - With `positional` (an E1 row), F1 is positional word F1 and EM(y, y') = 1 if the spans are identical.
   - γ = `mbr_em_weight` (the proposal's F1:EM ratio), tuned on the validation split. γ = 0 is expected F1; a large γ approaches MAP.
-- **Calibration:** fit one temperature T on the validation split (minimize the NLL of the gold span).
+- **Calibration:** fit one temperature T on the validation split (minimize the NLL of the gold span). Questions whose answer is not a valid span (not word-aligned, or over 30 words) are left out of the fit and counted in `calibration.json`.
 
 ### 4.5 Diagnostics
 - **Cross-span mass** (plan E3; also the W2 early check on the joint head):
