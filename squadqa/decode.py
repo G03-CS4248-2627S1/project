@@ -13,8 +13,9 @@ question, and everything after works on that.
 Content words (spec §4.3): every word except punctuation words and the articles a/an/the.
 Content-word F1 and EM compare spans by the content words they cover at the same positions,
 so boundary variants ("the Eiffel Tower", "Eiffel Tower") are the same answer, and the same
-text elsewhere in the passage is a different one (spec rule 4). span_f1_em is the shared
-function the F1-weighted training targets reuse.
+text elsewhere in the passage is a different one (spec rule 4). A span with no content word
+("the", ".") matches only itself. span_f1_em is the shared function the F1-weighted training
+targets reuse.
 """
 
 from dataclasses import dataclass
@@ -37,7 +38,8 @@ def span_f1_em(flags: np.ndarray, a_start, a_end, b_start, b_end) -> tuple[np.nd
 
     Only words with flags True count: content_flags for the normalized versions, all True for
     plain positional word F1 (where EM then means identical spans). A span with no counted
-    words follows the official scorer's empty rule: F1 = EM = 1 if both are empty, else 0.
+    word matches only the identical span (F1 = EM = 1) and nothing else: the scorer would call
+    any two such spans equal, but they sit at different positions (spec rule 4).
     """
     prefix = np.concatenate([[0], np.cumsum(flags, dtype=np.int64)])
     a_start, a_end, b_start, b_end = (np.asarray(x) for x in (a_start, a_end, b_start, b_end))
@@ -45,7 +47,7 @@ def span_f1_em(flags: np.ndarray, a_start, a_end, b_start, b_end) -> tuple[np.nd
     lb = prefix[b_end + 1] - prefix[b_start]
     lo, hi = np.maximum(a_start, b_start), np.minimum(a_end, b_end)
     overlap = np.where(lo <= hi, prefix[np.maximum(hi, lo - 1) + 1] - prefix[lo], 0)
-    both_empty = (la == 0) & (lb == 0)
+    both_empty = (la == 0) & (lb == 0) & (a_start == b_start) & (a_end == b_end)
     with np.errstate(divide="ignore", invalid="ignore"):
         f1 = np.where(la + lb > 0, 2.0 * overlap / (la + lb), 0.0)
     f1 = np.where(both_empty, 1.0, f1)
@@ -53,16 +55,16 @@ def span_f1_em(flags: np.ndarray, a_start, a_end, b_start, b_end) -> tuple[np.nd
     return f1, em
 
 
-def group_keys(flags: np.ndarray, starts: np.ndarray, ends: np.ndarray) -> list[tuple[int, int]]:
-    """Each span's first and last content word, so boundary variants share a key; (-1, -1)
-    for a span with no content word."""
+def group_keys(flags: np.ndarray, starts: np.ndarray, ends: np.ndarray) -> list[tuple[int, ...]]:
+    """Each span's first and last content word, so boundary variants share a key. A span with
+    no content word is its own group, (-1, start, end), so unrelated ones never pool."""
     idx = np.arange(len(flags))
     next_c = np.minimum.accumulate(np.where(flags, idx, len(flags))[::-1])[::-1]    # first content word >= w
     prev_c = np.maximum.accumulate(np.where(flags, idx, -1))                         # last content word <= w
     out = []
     for i, j in zip(starts.tolist(), ends.tolist()):
         f, l = int(next_c[i]), int(prev_c[j])
-        out.append((f, l) if f <= l else (-1, -1))
+        out.append((f, l) if f <= l else (-1, i, j))
     return out
 
 
@@ -187,8 +189,8 @@ def decode(cands: Candidates, flags: np.ndarray, rule: str, utility: str, em_wei
         used = np.ones_like(flags)
     else:
         raise ValueError(f"unknown mbr_utility {utility!r}")
-    first: dict[tuple[int, int], int] = {}
-    mass: dict[tuple[int, int], float] = {}
+    first: dict[tuple[int, ...], int] = {}
+    mass: dict[tuple[int, ...], float] = {}
     p = np.exp(cands.logp)
     for c, key in enumerate(keys):                          # candidates are most probable first
         first.setdefault(key, c)

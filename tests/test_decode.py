@@ -39,9 +39,10 @@ def test_same_text_elsewhere_gets_nothing():
     assert Dc.span_f1_em(f, 0, 1, 3, 4) == (0.0, 0.0)
 
 
-def test_empty_spans_follow_the_scorer_rule():
+def test_spans_without_content_words_match_only_themselves():
     f = flags_of("the cat and the cat")
-    assert Dc.span_f1_em(f, 0, 0, 3, 3) == (1.0, 1.0)   # both only articles
+    assert Dc.span_f1_em(f, 0, 0, 0, 0) == (1.0, 1.0)
+    assert Dc.span_f1_em(f, 0, 0, 3, 3) == (0.0, 0.0)   # "the" elsewhere: a different position
     assert Dc.span_f1_em(f, 0, 0, 1, 1) == (0.0, 0.0)
 
 
@@ -49,7 +50,8 @@ def brute_force(flags, a, b):
     ca = [w for w in range(a[0], a[1] + 1) if flags[w]]
     cb = [w for w in range(b[0], b[1] + 1) if flags[w]]
     if not ca or not cb:
-        return float(ca == cb), float(ca == cb)
+        same = float(not ca and not cb and a == b)
+        return same, same
     ov = len(set(ca) & set(cb))
     if ov == 0:
         return 0.0, 0.0
@@ -73,7 +75,7 @@ def test_f1_em_match_brute_force_and_broadcast():
 def test_group_keys():
     f = flags_of("Visit the Eiffel Tower . The cat")
     keys = Dc.group_keys(f, np.array([1, 2, 2, 4, 6, 1]), np.array([3, 3, 4, 5, 6, 1]))
-    assert keys == [(2, 3), (2, 3), (2, 3), (-1, -1), (6, 6), (-1, -1)]
+    assert keys == [(2, 3), (2, 3), (2, 3), (-1, 4, 5), (6, 6), (-1, 1, 1)]
 
 
 # One softmax per question.
@@ -141,6 +143,14 @@ def test_same_text_elsewhere_is_not_grouped():
     f = flags_of("the cat and the cat")
     c = cands([(0, 0), (1, 1), (4, 4)], [0.4, 0.35, 0.25])   # "the" (no content), cat, cat elsewhere
     assert Dc.decode(c, f, "map", "normalized") == (0, 0)
+
+
+def test_spans_without_content_words_never_pool():
+    # From review of PR #30: "." and "the" are unrelated and must not add up to beat "dog".
+    f = flags_of("the dog barked .")
+    c = cands([(1, 1), (3, 3), (0, 0)], [0.45, 0.30, 0.25])
+    assert Dc.decode(c, f, "map", "normalized") == (1, 1)
+    assert Dc.decode(c, f, "mbr", "normalized") == (1, 1)
 
 
 def test_mbr_prefers_the_span_that_overlaps_both():
