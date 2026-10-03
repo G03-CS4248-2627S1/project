@@ -42,6 +42,15 @@ mbr_utility: normalized                # normalized = content-word F1/EM, bounda
 f1_target: normalized                  # normalized = content-word F1, boundary variants exact | positional (ablation; §4.3)
 calibration: temperature               # one T, fit on validation split
 extra_train_data: []                   # row 5: [adversarialqa]; augmentation (P2) adds augmented
+train:                                 # reader fine-tuning: the plan's sandbox recipe (plan §12.1); lr and epochs tuned in row 0 (plan §12.3)
+  lr: 2.0e-5                           # write floats with a dot: YAML reads 2e-5 as a string
+  epochs: 1
+  warmup_frac: 0.1                     # linear schedule, warmup over this fraction of the steps
+  weight_decay: 0.01                   # AdamW; none on biases and LayerNorm weights
+  effective_batch: 32                  # questions per optimizer step (all their windows), via gradient accumulation
+  grad_clip: 1.0
+  head_dropout: 0.1
+  checkpoint_every: 500                # optimizer steps
 verifier:
   variant: shared_lora                 # shared_lora = frozen reader + LoRA | separate = ModernBERT-large (E2 compares both)
   separate_model: answerdotai/ModernBERT-large   # pin in squadqa/download_model.py before first use
@@ -111,6 +120,7 @@ def word_spans(text: str) -> list[tuple[int, int]]:
 ### 3.4 Windows
 - About 5% of paragraphs exceed 250 words, so most questions produce one window: 689 of the 87,256 kept training questions have more than one, and none has more than 4.
 - Several windows: put the valid span scores of all windows of a question into **one** softmax. A span present in several windows uses the score from the window where it is most central (largest `min(tokens to its left, tokens to its right)` within the window).
+- Training with several windows: start and end (and later span) scores of all the question's windows share one softmax too. The gold answer's copies in every window that wholly holds it all count as correct: the loss is minus the log of their summed probability (`squadqa.heads.question_nll`).
 
 ### 3.5 Sibling answers (verifier negatives)
 - For question q: the gold answers of the other questions on the same paragraph, as word spans.

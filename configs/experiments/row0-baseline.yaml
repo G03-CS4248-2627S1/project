@@ -1,0 +1,3 @@
+# Ladder row 0: the standard (independent) start/end head at the word level.
+# Learning rate and epochs are tuned on base in issue #23 (plan §12.3) and set here.
+span_head: standard

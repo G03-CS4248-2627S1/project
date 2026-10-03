@@ -162,3 +162,17 @@ def test_set_seed_is_reproducible():
     a = random.random()
     C.set_seed(7)
     assert random.random() == a
+
+def test_overrides_read_exponent_floats():
+    assert C.parse_override("train.lr=3e-5") == {"train": {"lr": 3e-5}}
+    assert C.load_config(None, ["train.lr=3e-5"])["train"]["lr"] == 3e-5
+    assert C.load_config(None, ["train.lr=1"])["train"]["lr"] == 1                  # an int may stand for a float
+
+
+def test_values_keep_their_base_type(tmp_path):
+    with pytest.raises(TypeError, match="write 3.0e-5"):
+        C.load_config(write_yaml(tmp_path / "e.yaml", {"train": {"lr": "3e-5"}}))
+    with pytest.raises(TypeError, match="span_head"):
+        C.load_config(None, ["span_head=3"])
+    with pytest.raises(TypeError):
+        C.load_config(None, ["train.epochs=true"])
