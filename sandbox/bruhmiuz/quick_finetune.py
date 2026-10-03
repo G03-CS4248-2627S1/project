@@ -6,7 +6,7 @@ It gives a first accuracy number and times one large run (plan W1).
 - Evaluate: the validation articles, with the official scorer. dev-v1.1 is not used.
 
 Run on a GPU node from the repo root, with the repo on PYTHONPATH (the .sbatch does this):
-    python sandbox/bruhmiuz/quick_finetune.py --run-id <id> [--per-device-batch 16]
+    python sandbox/bruhmiuz/quick_finetune.py --run-id <id> [--seed 0] [--per-device-batch 16]
         [--max-steps N] [--val-limit N] [--ckpt-every N]
 Checkpoints go to $SQUADQA_SCRATCH/runs/<run-id>/. Re-running with the same run id resumes.
 """
@@ -34,7 +34,7 @@ from squadqa.splits import load_val_titles
 
 NAME = "microsoft/deberta-v3-large"
 MAX_LEN, STRIDE = 384, 128
-EFFECTIVE_BATCH, LR, WARMUP_FRAC, WEIGHT_DECAY, EPOCHS, SEED = 32, 2e-5, 0.1, 0.01, 1, 0
+EFFECTIVE_BATCH, LR, WARMUP_FRAC, WEIGHT_DECAY, EPOCHS = 32, 2e-5, 0.1, 0.01, 1
 TOPK, MAX_ANSWER_TOKENS = 20, 64
 
 
@@ -149,6 +149,7 @@ def predict(model, tok, articles, batch_size: int = 64) -> dict:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-id", required=True)
+    ap.add_argument("--seed", type=int, default=0, help="model init and data order")
     ap.add_argument("--per-device-batch", type=int, default=16)
     ap.add_argument("--max-steps", type=int, default=None, help="stop early (smoke tests)")
     ap.add_argument("--val-limit", type=int, default=None, help="evaluate only the first N questions")
@@ -159,7 +160,7 @@ def main() -> None:
     run_dir = Path(env("SQUADQA_SCRATCH")) / "runs" / args.run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     ckpt_path = run_dir / "checkpoint.pt"
-    torch.manual_seed(SEED)
+    torch.manual_seed(args.seed)
     rev = MODELS[NAME]["revision"]
     print(f"run {args.run_id} on {torch.cuda.get_device_name()}, dir {run_dir}", flush=True)
 
@@ -167,7 +168,7 @@ def main() -> None:
     tok = AutoTokenizer.from_pretrained(NAME, revision=rev)
     train_qs, val_articles = load_data(args.val_limit)
     feats = featurize_train(tok, train_qs)
-    n_batches = len(epoch_batches(feats, SEED, 0))
+    n_batches = len(epoch_batches(feats, args.seed, 0))
     total_steps = args.max_steps or n_batches * EPOCHS
     print(f"{len(train_qs)} train questions -> {len(feats)} windows, {n_batches} steps/epoch, "
           f"{total_steps} steps; featurized in {time.time() - t0:.0f}s", flush=True)
@@ -207,7 +208,7 @@ def main() -> None:
     while step < total_steps:
         epoch, pos = divmod(step, n_batches)
         if epoch != batches_epoch:
-            batches, batches_epoch = epoch_batches(feats, SEED, epoch), epoch
+            batches, batches_epoch = epoch_batches(feats, args.seed, epoch), epoch
         batch = batches[pos]
         for k in range(accum):
             rows = [feats[i] for i in batch[k * args.per_device_batch:(k + 1) * args.per_device_batch]]
@@ -238,7 +239,7 @@ def main() -> None:
     scores = json.loads(subprocess.run([sys.executable, "qa/evaluate-v2.0.py", str(data_path), str(pred_path)],
                                        capture_output=True, text=True, check=True).stdout)
     commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
-    metrics = {"run_id": args.run_id, "commit": commit, "model": NAME, "revision": rev, "seed": SEED,
+    metrics = {"run_id": args.run_id, "commit": commit, "model": NAME, "revision": rev, "seed": args.seed,
                "val_questions": scores["total"], "exact": scores["exact"], "f1": scores["f1"],
                "steps": step, "train_minutes_this_job": round(train_minutes, 1),
                "predict_seconds": round(time.time() - t_pred), "gpu": torch.cuda.get_device_name(),
