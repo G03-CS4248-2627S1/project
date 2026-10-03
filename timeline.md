@@ -2,10 +2,10 @@
 
 When each part of the project happens, what blocks what, and what to cut if we fall behind.
 
-- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v0.6). **How:** [implementation_details.md](implementation_details.md). **When:** this file.
+- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.0). **How:** [implementation_details.md](implementation_details.md). **When:** this file.
 - This file expands plan §9 into stages. The plan's W1–W7 are course weeks 7–13. Section numbers below (§4.3, E3, …) refer to the plan.
 - If this file and the plan disagree on scope, stop and ask a human.
-- Drafted 2026-09-28 (week 7). Moved to the submitted proposal's schedule on 2026-10-03 (plan v0.6). Whoever changes a milestone or a stage's scope updates this file and tells the team.
+- Drafted 2026-09-28 (week 7). Moved to the submitted proposal's schedule on 2026-10-03 (plan v1.0). Whoever changes a milestone or a stage's scope updates this file and tells the team.
 
 ---
 
