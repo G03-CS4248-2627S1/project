@@ -68,7 +68,7 @@ Entry points run from the repo root as `python -m squadqa.<module>`, with the co
 ### 3.1 Issues are the task list
 
 - **One GitHub issue per task,** such as "F1-weighted target loss" or "E1 grid on base", assigned to its owner and labelled with its stage (`stage-1` … `stage-6`).
-- **One GitHub milestone per stage,** due on its Thursday (timeline.md §1).
+- **One GitHub milestone per stage,** due on its Thursday (timeline.md §1). The `stage-1` … `stage-6` labels and the six milestones already exist on GitHub.
 - **Open an issue before starting work** that someone else might also start. If an issue already exists, comment on it instead of starting in parallel.
 - **PRs close issues** with `Closes #<n>` in the description.
 
@@ -101,7 +101,8 @@ Entry points run from the repo root as `python -m squadqa.<module>`, with the co
 - **One topic per branch.** A second topic gets a second branch.
 - **Never push to `main` directly.** GitHub can't enforce this on our plan, so it's a team rule.
 - **Never keep committing to a branch after its PR merges.** Start a new branch from `main`. A commit pushed to `bruhmiuz/quick-baseline` after its PR merged went missing from `main` for days.
-- **Stacked branches** (one branched from another unmerged branch) are allowed when needed. Say so in the PR, and merge them in order.
+- **Stacked branches** (one branched from another unmerged branch) are allowed when needed. Say so in the PR, open it against the lower branch, and merge them in order.
+  - Squash merging rewrites the lower branch's commits, so after it merges, rebase the upper branch onto `main` before merging it: `git fetch && git rebase --onto origin/main <old lower commit> <upper branch>`, then `git push --force-with-lease`. GitHub retargets the upper PR to `main` on its own.
 
 ### 4.2 When to open a PR
 
@@ -128,7 +129,7 @@ Entry points run from the repo root as `python -m squadqa.<module>`, with the co
 - **One approving review from another teammate** before merging. For shared modules, the reviewer should be someone who builds on that module.
 - **Reviewers check:** correctness against the spec, tests, that results come from the PR's own commit, and that no dev data was used.
 - **Respond within a working day.** If you can't review in time, say so, so the author can ask someone else.
-- **The author merges** after approval, with **Squash and merge**, then deletes the branch.
+- **The author merges** after approval. The repository allows only **Squash and merge**, which uses the PR's title and description as the commit message, so write them for the history. Merged branches are deleted automatically.
 - **Assistants never merge.** They may open a PR when their user asks.
 
 ---
