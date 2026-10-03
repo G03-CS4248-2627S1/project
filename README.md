@@ -122,6 +122,12 @@ The official scorer takes a JSON object mapping each question id to an answer st
 uv run python qa/evaluate-v2.0.py qa/dev-v1.1.json predictions.json
 ```
 
+`squadqa/evaluate.py` wraps it: it rejects missing, extra or empty answers, scores the validation split by default, and adds Adversarial SQuAD's worst-case score and paired bootstrap intervals. Dev and the robustness sets need `--final` (workflow.md §6.1).
+
+```
+uv run python -m squadqa.evaluate validation predictions.json [--compare other_predictions.json]
+```
+
 ## Layout
 
 | Path | Contents |

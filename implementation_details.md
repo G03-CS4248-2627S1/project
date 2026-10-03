@@ -2,7 +2,7 @@
 
 Implementation spec for coding agents and team members.
 
-- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.1). **How:** this file. **When:** [timeline.md](timeline.md). **How we work:** [workflow.md](workflow.md).
+- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.2). **How:** this file. **When:** [timeline.md](timeline.md). **How we work:** [workflow.md](workflow.md).
 - Week labels such as W2 or W5+ are plan weeks: W1–W7 are course weeks 7–13.
 - If this file and the plan disagree, stop and ask a human.
 
@@ -62,7 +62,7 @@ seeds: [0, 1, 2]
 ## 3. Data
 
 ### 3.1 Splits
-- **Validation:** hold out about 10% of *articles* from `train-v1.1.json` (≈44 articles, ≈8.7k questions). Split by article title, never by question: questions on the same article share paragraphs. Fixed seed; save the list to `data/splits/val_articles.txt`.
+- **Validation:** hold out about 10% of *articles* from `train-v1.1.json` (44 articles, 7,708 questions). Split by article title, never by question: questions on the same article share paragraphs. Fixed seed; save the list to `data/splits/val_articles.txt`.
 - **Cross-fitting folds (K = 3), E2 ablation only:** also by article, over the non-validation training articles.
 - The final reader trains on all non-validation training articles.
 
@@ -282,9 +282,9 @@ Not the default: the default candidates are sampled from the final reader (§5.1
 - Report per-seed results, mean ± std over 3 seeds, and paired bootstrap 95% confidence intervals for headline differences.
 - Score every frozen system on dev, Adversarial SQuAD (AddSent, AddOneSent) and the four SQuAD-Shifts sets, and report each separately.
 - **Adversarial SQuAD** (`data/external/adversarial_squad/`): each file holds 1,000 dev-v1.1 questions unchanged plus adversarial versions whose ids add a suffix (`-high-conf-turk0`, …).
-  - Main number, Jia & Liang's adversarial score: for each original id, take the worst EM and the worst F1 over the questions sharing that id prefix (the original and its versions), then average over the 1,000 originals. Check the grouping against the authors' evaluation script on their CodaLab worksheet before reporting.
+  - Main number, Jia & Liang's adversarial score, with the grouping of the authors' `eval_squad.py` (CodaLab bundle `0xc2824269ba0a4179ac63c08fd3997d1c`, checked 2026-10-04; `squadqa.evaluate.adversarial_groups`). Group questions by the id prefix before the first `-`. In a group with adversarial versions (787 of the 1,000), the original is not used: take the version with the lowest F1 (the first in file order on ties) and that version's EM, so EM is not minimized separately. A group without versions keeps its original. Average over the 1,000 groups.
   - Get per-question EM and F1 from the official scorer's own `get_raw_scores` (load `qa/evaluate-v2.0.py` with `importlib`); only the grouping is ours (rule 5).
-  - Also report the scorer's plain average over all questions in the file, which many papers quote instead.
+  - Also report the scorer's plain average over all questions in the file, which many papers quote instead, and the average over the 1,000 originals alone.
 
 ---
 
