@@ -62,17 +62,29 @@ README.md, "Team workflow", has the full version, including how experiments move
   - **`.claude/skills/soc-cluster/soc.sh`** runs commands in the user's cluster clone and copies results and logs back.
     - It works through a tunnel the user opens with `soc.sh connect`, plus SSH key login set up once with `soc.sh setup-key`. Both ask for the SoC password, so the user runs them; agents can't type passwords.
     - The `soc-cluster` and `fetch-results` skills wrap the script. Other agents can call it directly; run it without arguments for usage.
-  - **Submitting jobs.** Every agent follows these steps, whatever tool it is:
+  - **Running repo scripts on Windows.** They need Git Bash.
+    - In PowerShell, `bash` is WSL's bash, which has its own home and SSH keys. Call `"C:/Program Files/Git/bin/bash.exe" .claude/skills/soc-cluster/soc.sh ...` instead.
+    - Codex's sandbox runs as a different Windows account: it can't read `~/.ssh`, and git reports "dubious ownership". Run `soc.sh` and `git pull` with escalated permissions.
+  - **Submitting jobs.** Every agent follows these steps, whatever tool it is. First read `.claude/skills/soc-cluster/SKILL.md`: its cluster facts and rules apply to every agent, not only Claude Code.
     1. **Ask the user first,** naming the script, GPU and time limit. Jobs use shared GPU time. Do the same before `scancel`, and only cancel the user's own jobs.
-    2. **Write the job script** by copying `slurm/template.sbatch`. It sets up `.env`, the venv, offline model loading and the run id. Commit and push it with the code it runs.
+    2. **Write the job script** by copying `slurm/template.sbatch`. It sets up `.env`, the venv, offline model loading and the run id.
+       - The code must write the run's config, metrics and predictions to `results/<run_id>/` in the clone, which is what `soc.sh fetch` copies. Checkpoints go to `$SQUADQA_SCRATCH/runs/<run_id>/`.
+       - A new training script gets a smoke run first (spec §9): a few dozen steps with a checkpoint, then a rerun with the same run id to test the resume.
+       - Commit and push the script with the code it runs.
     3. **Update the cluster clone** to the same commit: `soc.sh run 'git fetch && git checkout <branch> && git pull --ff-only'`.
+       - Don't change the clone's checkout while `soc.sh jobs` lists your jobs. A job reads code from the clone when it starts, so the change would alter what queued jobs run. Jobs built from the template stop if the clone's commit differs from the one they were submitted at.
+       - The pull needs a GitHub token stored on the cluster (README, "One-time setup on the cluster"). If it fails with `could not read Username`, ask the user to pull in their own ssh session.
+       - If `pyproject.toml` or `uv.lock` changed, run `soc.sh sync` afterwards.
+       - Committing fetched results moves your local commit ahead of the clone, so push and pull again before the next submit.
     4. **Submit** with `soc.sh submit [sbatch options] slurm/<name>.sbatch [script args]`, never with a raw `sbatch`.
        - It refuses if the clone isn't at your local commit or has uncommitted edits.
        - It keeps jobs off broken nodes. The list is `BROKEN_NODES` in `soc.sh`; update it there when a node breaks or is fixed.
-       - If `SOC_MAIL_TYPE` is set in the local `.env` (for example `END,FAIL`), Slurm emails `<soc unix id>@comp.nus.edu.sg`.
-    5. **Watch and collect.** `soc.sh jobs` shows the queue, `soc.sh log <job name>-<job id>.out` copies a log, and `soc.sh fetch <run_id>` copies results.
+       - If `SOC_MAIL_TYPE` is set in the local `.env` (for example `END,FAIL`), Slurm emails `<soc unix id>@comp.nus.edu.sg`. Delivery hasn't been confirmed yet.
+       - Before a GPU type's first use, run the smoke test on it. H100 and H200 haven't been tested yet.
+    5. **Watch and collect.** `soc.sh jobs` shows the queue, `soc.sh log <job name>-<job id>.out` copies a log, and `soc.sh fetch <run_id>` copies results. To change a pending job, see SKILL.md.
+    6. **Runs longer than 3 hours** must checkpoint and resume (spec rule 8). Queue the resume behind the running job: `soc.sh submit --dependency=afterany:<job id> --export=ALL,RUN_ID=<run id> slurm/<name>.sbatch`. Ask the team before using `gpu-long` (up to 3 days), because the spec assumes 3-hour jobs.
   - **Cluster limits** (checked September 2026; details in `.claude/skills/soc-cluster/SKILL.md`):
-    - The login node allows 1 GB of virtual memory per process and has a tiny `/tmp` quota. Build environments and run Python in jobs, not on the login node.
+    - The login node allows 1 GB of virtual memory and 300 s of CPU time per process and has a tiny `/tmp` quota. Build environments and run Python in jobs, not on the login node.
     - GPU jobs need `--partition=gpu` (up to 3 hours) or `--partition=gpu-long` (up to 3 days). The default partition has no GPUs.
     - Request A100, H100 or H200 GPUs, which support bf16.
     - SSH to GitHub is blocked, so clone and pull over HTTPS.

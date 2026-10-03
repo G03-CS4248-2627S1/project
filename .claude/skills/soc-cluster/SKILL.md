@@ -27,11 +27,16 @@ Keep `$USER` and `$HOME` inside single quotes so they expand on the cluster, for
 
 ## Cluster facts (checked September 2026)
 
-- **The login node is too small for real work.** Each process gets at most 1 GB of virtual memory, each user at most 64 processes, and `/tmp` has a tiny per-user quota. uv and PyTorch fail there, so build environments and run Python inside jobs:
+- **The login node is too small for real work.** Each process gets at most 1 GB of virtual memory and 300 s of CPU time, each user at most 64 processes, and `/tmp` has a tiny per-user quota. uv and PyTorch fail there, so build environments and run Python inside jobs:
   - CPU work: `srun --partition=normal --time=00:30:00 --cpus-per-task=4 --mem=8G <command>`.
   - Rebuild the environment with `sync`, for example after `pyproject.toml` or `uv.lock` changes and a `git pull`.
 - **GPU jobs need a GPU partition.** Use `--partition=gpu` (up to 3 hours) or `--partition=gpu-long` (up to 3 days); the default partition `normal` has no GPUs.
   - Request a GPU with bf16 support: `--gpus=a100-40`, `a100-80`, `h100-96`, `h100-47` or `h200-141`.
+- **There are two login nodes.** `xlogin` is round-robin DNS over xlogin1 and xlogin2, so each connection can land on either (checked 2026-09-28). A tmux session is visible only from the node it started on.
+- **Job chains work** (2026-09-28): `--dependency=afterok:<job id> --kill-on-invalid-dep=yes` started the second job 2 s after the first ended, with no connection open.
+  - A job that hits its time limit ends as TIMEOUT, which `afterok` treats as failure, so resume chains use `afterany`. That case is untested.
+- **A pending job can be changed** with `scontrol update` (2026-09-28), for example `scontrol update JobId=<id> TresPerJob=gres/gpu:a100-40 ExcNodeList=xgph[10-15],xgpj0`. `ExcNodeList` replaces the list, so repeat `BROKEN_NODES` from `soc.sh`.
+- **Slurm mail** is configured (`MailDomain=comp.nus.edu.sg`), so `--mail-type` without `--mail-user` mails `<soc id>@comp.nus.edu.sg`. Delivery is unconfirmed.
 - **uv lives at `~/.local/bin/uv`** and is not on `PATH` in non-interactive shells.
 - **Compute nodes have internet access** (PyPI and Hugging Face).
 - **Storage:** there is no `/temp` on the login node. Checkpoints and caches go under `$HOME` (`$SQUADQA_SCRATCH`, `$HF_HOME` in the cluster `.env`).
@@ -57,7 +62,7 @@ Keep `$USER` and `$HOME` inside single quotes so they expand on the cluster, for
    - If `.env` is missing `SOC_USER` or `SOC_REPO`, ask the user for them.
    - If the check fails, pass on the script's message; it says whether to run `connect` or `setup-key`. Don't retry in a loop.
 2. **Do the task** with `run`, or `submit` for jobs.
-   - Follow "Submitting jobs" in AGENTS.md: new scripts start from `slurm/template.sbatch`, and the cluster clone must be at the local commit.
+   - Follow "Submitting jobs" in AGENTS.md: new scripts start from `slurm/template.sbatch`, and the cluster clone must be at the local commit. `submit` passes that commit to the job as `SQUADQA_COMMIT`, and the template stops if the clone has moved by the time the job starts.
    - To wait for a job, run `submit --wait slurm/<script>.sbatch` in the background. Otherwise check on it with `jobs`.
    - Fetch its output afterwards with `log <job-name>-<job-id>.out`.
    - **`run` does not pass stdin through** (the tunnel check's `ssh` reads it first). Piping a script into `run '... python -'` runs an empty program.

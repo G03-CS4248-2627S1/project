@@ -12,7 +12,7 @@ Find out what you can by exploring, and ask only for what you can't discover.
    - `ssh`, `ssh-copy-id` and any existing keys in `~/.ssh`;
    - the local GPU, if any.
 
-   On Windows, run the repo's scripts in Git Bash. In Git Bash, write paths as `/c/Users/...`, because the colon in `C:/...` breaks `PATH`-like variables.
+   On Windows, run the repo's scripts in Git Bash (from PowerShell, `C:/Program Files/Git/bin/bash.exe`; see AGENTS.md). In Git Bash, write paths as `/c/Users/...`, because the colon in `C:/...` breaks `PATH`-like variables.
 4. **Create `.env`** from `.env.example`, filling in `SOC_USER`, `SOC_REPO` (the clone folder on the cluster, for example `cs4248`) and the local paths.
 5. **Connect the assistant to the memory file.**
    - **Claude Code:** create `CLAUDE.local.md` (gitignored) containing the single line `@local/MEMORY.md`, so the memory loads automatically. The project skills in `.claude/skills/` load on their own.
@@ -21,6 +21,7 @@ Find out what you can by exploring, and ask only for what you can't discover.
 6. **Set up cluster access** (README.md, "Working with the cluster from your own machine").
    - The user connects to the NUS Cisco VPN, then runs `bash .claude/skills/soc-cluster/soc.sh connect` and `bash .claude/skills/soc-cluster/soc.sh setup-key` in their own terminal. Both ask for the SoC password.
    - Then you run `soc.sh check`.
-7. **Set up the cluster clone** (README.md, "One-time setup on the cluster"): install uv, clone over HTTPS, create the cluster `.env`, then run `soc.sh sync`. Ask before submitting the smoke test (`soc.sh submit slurm/smoke_test.sbatch`), then fetch its result with `soc.sh fetch`.
+7. **Set up the cluster clone** (README.md, "One-time setup on the cluster"): install uv, clone over HTTPS with a stored GitHub token, create the cluster `.env`, run `soc.sh sync`, then download the model and datasets.
+   - Check what already exists before redoing anything, for example `soc.sh run 'git config --get credential.helper; ls .venv/bin/python data/external'`, and record each item under "Cluster status". Ask before submitting the smoke test (`soc.sh submit slurm/smoke_test.sbatch`), then fetch its result with `soc.sh fetch`.
 8. **Create `sandbox/<name>/`** for the user's scratch work.
 9. **Record what's done** under "Cluster status" and anything unfinished under "Open threads", with dates.
