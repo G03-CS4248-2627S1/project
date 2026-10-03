@@ -8,6 +8,9 @@
 #   soc.sh setup-key          install your SSH key on the cluster, once (needs the tunnel)
 #   soc.sh check              test that the tunnel and key login work
 #   soc.sh run '<command>'    run a command in your cluster clone
+#   soc.sh submit [sbatch options] <script> [script args]
+#                             submit a job from your cluster clone, which must be at this checkout's commit
+#   soc.sh jobs               list your queued and running jobs
 #   soc.sh sync               build or update the cluster clone's environment (uv sync, in a CPU job)
 #   soc.sh list [n]           list the n most recent runs in your cluster clone (default 20)
 #   soc.sh fetch <run_id>...  copy results/<run_id>/ from the cluster into local results/
@@ -23,12 +26,14 @@ case "$SOC_REPO" in "~"*) echo "SOC_REPO must be relative to your home directory
 
 PORT=2222   # local end of the tunnel
 HOST="$SOC_USER@localhost"
+# Nodes that fail our jobs (see SKILL.md, "Cluster facts"). `submit` keeps every job off them.
+BROKEN_NODES='xgph[10-15],xgpj0'
 # HostKeyAlias records xlogin's host key under its real name rather than localhost.
 SSH_OPTS=(-o Port=$PORT -o HostKeyAlias=xlogin.comp.nus.edu.sg -o BatchMode=yes -o ConnectTimeout=15)
 
 need_tunnel() {
   local err
-  if ! err=$(ssh "${SSH_OPTS[@]}" "$HOST" true 2>&1); then
+  if ! err=$(ssh -n "${SSH_OPTS[@]}" "$HOST" true 2>&1); then
     case "$err" in
       *"Connection refused"*|*"timed out"*)
         echo "The tunnel is not open. Run in your own terminal and keep it open: bash .claude/skills/soc-cluster/soc.sh connect" >&2 ;;
@@ -56,6 +61,28 @@ case "${1:-}" in
     [ $# -gt 0 ] || { echo "usage: soc.sh run '<command>'" >&2; exit 1; }
     need_tunnel
     remote "$*" ;;
+  submit)
+    shift
+    [ $# -gt 0 ] || { echo "usage: soc.sh submit [sbatch options] <script> [script args]" >&2; exit 1; }
+    need_tunnel
+    # The job runs the cluster clone's code, so that code must be the commit checked out here.
+    head=$(git rev-parse HEAD)
+    read -r cluster_head cluster_edits < <(remote 'echo "$(git rev-parse HEAD) $(git status --porcelain --untracked-files=no | wc -l)"') || true
+    [ -n "${cluster_head:-}" ] || { echo "Could not read the commit of the cluster clone ($SOC_REPO)." >&2; exit 1; }
+    if [ "$cluster_head" != "$head" ]; then
+      echo "The cluster clone is at ${cluster_head:0:7}, but this checkout is at ${head:0:7}." >&2
+      echo "Push this branch, then update the clone: soc.sh run 'git fetch && git checkout $(git branch --show-current) && git pull --ff-only'" >&2
+      exit 1
+    fi
+    [ "$cluster_edits" = 0 ] || { echo "The cluster clone has uncommitted changes (soc.sh run 'git status'). Make code changes here, not on the cluster." >&2; exit 1; }
+    git diff --quiet HEAD || echo "Note: this checkout has uncommitted changes. The job runs commit ${head:0:7} without them." >&2
+    opts=(--exclude="$BROKEN_NODES")
+    [ -z "${SOC_MAIL_TYPE:-}" ] || opts+=(--mail-type="$SOC_MAIL_TYPE")
+    # Options given here come after the defaults, so they override them.
+    remote "$(printf '%q ' sbatch "${opts[@]}" "$@")" ;;
+  jobs)
+    need_tunnel
+    remote 'squeue -u "$USER" -o "%.10i %.16j %.9T %.10M %.10l %.14b %R"' ;;
   sync)
     need_tunnel
     # The login node caps each process at 1 GB of virtual memory and /tmp at a tiny quota,
@@ -83,6 +110,6 @@ case "${1:-}" in
     scp -q "${SSH_OPTS[@]}" "$HOST:$SOC_REPO/logs/$2" logs/
     echo "Fetched logs/$2" ;;
   *)
-    sed -n '7,14p' "$0" >&2
+    sed -n '7,17p' "$0" >&2
     exit 1 ;;
 esac
