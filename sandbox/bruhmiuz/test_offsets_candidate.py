@@ -28,6 +28,9 @@ def test_word_rule_and_deberta_leading_space():
 def test_all_training_offsets_round_trip_and_fit_a_window():
     cfg = load_config()
     tokenizer = D.load_tokenizer(cfg["model"])
+    assert tokenizer(
+        "Who won", add_special_tokens=False, return_offsets_mapping=True
+    )["offset_mapping"] == [(0, 3), (3, 7)]
     layout = D.pair_layout(tokenizer)
     skipped = set(D.SKIPPED_IDS.read_text(encoding="utf-8").splitlines())
 
@@ -73,6 +76,8 @@ def test_all_training_offsets_round_trip_and_fit_a_window():
                 windows = D.make_windows(
                     q_ids, ctx, layout, cfg["max_seq_len"], cfg["doc_stride"]
                 )
+                for window in windows:
+                    assert len(window.input_ids) <= cfg["max_seq_len"], qa["id"]
                 containing = [
                     w for w in windows
                     if w.first_word <= i and j < w.first_word + w.n_words
@@ -96,4 +101,3 @@ def test_all_training_offsets_round_trip_and_fit_a_window():
     assert len(overlong) == 78
     assert misaligned.isdisjoint(overlong)
     assert misaligned | overlong == skipped
-
