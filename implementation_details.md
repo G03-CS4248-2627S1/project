@@ -2,7 +2,7 @@
 
 Implementation spec for coding agents and team members.
 
-- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v0.5). **How:** this file. **When:** [timeline.md](timeline.md).
+- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v0.6). **How:** this file. **When:** [timeline.md](timeline.md).
 - Week labels such as W2 or W5+ are plan weeks: W1–W7 are course weeks 7–13.
 - If this file and the plan disagree, stop and ask a human.
 
@@ -31,20 +31,27 @@ max_seq_len: 384
 doc_stride: 128
 padding: dynamic                       # pad to longest in batch; batch by similar length
 max_answer_words: 30                   # L; every dev question has a reference of ≤ 28 words
-span_head: joint                       # joint | standard (baseline)
+span_head: compound                    # compound (row 1+) = joint + auxiliary independent loss | joint (P2 ablation) | standard (row 0)
+aux_independent_weight: 1.0            # compound only (Fajcik et al., 2021)
 head_dim: 256
 W_init: zeros
 decode_topk: 10
 decode_rules: [map, mbr]               # always report both
+mbr_em_weight: 1.0                     # γ, the F1:EM decoding ratio: MBR utility F1 + γ·EM; 0 = expected F1
 calibration: temperature               # one T, fit on validation split
+extra_train_data: []                   # row 5: [adversarialqa]; augmentation (P2) adds augmented
 verifier:
-  type: in_place                       # in_place | levitated | levitated_shared
-  shared_option: B                     # A = fully shared multi-task, B = frozen reader + marker-only LoRA
-  lora: {rank: 16, alpha: 32, targets: [query_proj, key_proj, value_proj]}   # check module names in the installed HF version
+  variant: shared_lora                 # shared_lora = frozen reader + LoRA | separate = ModernBERT-large (E2 compares both)
+  separate_model: answerdotai/ModernBERT-large   # pin in squadqa/download_model.py before first use
+  type: in_place                       # in_place | levitated | levitated_shared (both P3)
+  shared_option: B                     # levitated_shared only (P3): A = fully shared multi-task, B = frozen reader + marker-only LoRA
+  lora: {rank: 16, alpha: 32, targets: [query_proj, key_proj, value_proj]}   # shared_lora and option B; check module names in the installed HF version
   k_infer: 5
-  k_sweep: [5, 10, 20, 30]             # levitated variants only
+  k_sweep: [5, 10, 20, 30]             # levitated variants only (P3)
   train_candidates: sampled            # sampled = drawn from the final reader's own span distribution (plan §4.6) | crossfit (E2 ablation)
   crossfit_folds: 3                    # crossfit ablation only, on base
+  sibling_negatives: false             # P2 ablation (§3.5)
+  unanswerable_negatives: false        # row 5: SQuAD 2.0 unanswerable questions with a null candidate (§5.1)
 seeds: [0, 1, 2]
 ```
 
@@ -105,6 +112,13 @@ def word_spans(text: str) -> list[tuple[int, int]]:
 ### 3.5 Sibling answers (verifier negatives)
 - For question q: the gold answers of the other questions on the same paragraph, as word spans.
 - Drop any sibling whose word-overlap F1 with q's gold span is above 0.
+- Used only with `sibling_negatives: true` (P2 ablation).
+
+### 3.6 Additional data (ladder row 5, plan §4.8)
+- All files come from `python -m squadqa.download_external`, which pins them, drops validation articles from training files and removes duplicates. Its docstring says what each file may be used for.
+- **AdversarialQA** (`data/external/adversarialqa/train.json`, the combined split): extra reader training data when `extra_train_data` contains `adversarialqa`. Same format as SQuAD, one answer per question. `adversarialqa/dev.json` is built on dev-v1.1 passages, so never train or tune on it (rule 1).
+- **SQuAD 2.0 unanswerable questions** (`data/external/squad2/train-v2.0.json`): after duplicate removal this file holds only the unanswerable questions, all on train-v1.1 passages. They are verifier negatives when `unanswerable_negatives: true` (§5.1). Their candidates are the reader's top-k plus each `plausible_answers` span, located with its `answer_start` (rule 4) and converted to word spans (§3.2). Drop plausible answers that are not word-aligned.
+- **Augmentation (P2):** each rule (letter case, date format, name substitution) edits the passage, question and answer together, and carries `answer_start` through the edit by offset arithmetic, never by search (rule 4). The offset round-trip test (§9) must pass on the augmented set. Never augment validation articles or anything from dev-v1.1 (rules 1–2).
 
 ---
 
@@ -159,6 +173,7 @@ overlap = max(0, min(j, j*) − max(i, i*) + 1)
 P = overlap / (j − i + 1);  R = overlap / (j* − i* + 1);  F1 = 2PR / (P + R)   (0 if overlap = 0)
 target = (1 − α) · onehot(gold) + α · softmax over {F1 > 0} of (F1 / τ)     # α, τ tuned on validation
 ```
+- `α` is the proposal's F1:EM loss ratio: the exact-match (one-hot) and F1-weighted parts are mixed `(1 − α) : α`.
 **Note: this F1 differs from the official scorer's.** The scorer normalizes both strings first: lowercase, delete ASCII punctuation, remove *a*/*an*/*the*, collapse whitespace (`normalize_answer` in `qa/evaluate-v2.0.py`). Here, punctuation words and articles count, so a leading "the" or a trailing "." costs about 0.2 F1 (gold "Eiffel Tower" vs. "the Eiffel Tower": 0.8 here, 1.0 official). Low priority: don't restructure code for it. If an easy fix is wanted, give each word a 0/1 flag (0 for punctuation words and articles) and count only flagged words in the overlap and lengths, with prefix sums. A span with no flagged words then needs the scorer's empty-token rule.
 
 Cross-entropy, NaN-safe (masked entries have log p = −inf, and 0 · −inf = NaN):
@@ -167,10 +182,18 @@ logp = scores.flatten(1).log_softmax(-1)
 loss = -torch.where(target > 0, target * logp, torch.zeros_like(logp)).sum(-1).mean()
 ```
 
+**Compound objective** (`span_head: compound`, ladder row 1; Fajcik et al. 2021): add the standard independent loss on the head's start and end scores.
+- Start logits are `u(h_s)` over the passage words of all of a question's windows (one softmax, as in §3.4); end logits are `v(h_e)`.
+- Cross-entropy against i* and j*, weighted by `aux_independent_weight`.
+- This term always uses one-hot targets. The F1-weighted target (row 2) applies to the joint term only.
+- Decoding uses the joint scores s(i, j).
+
 ### 4.4 Decoding
 - `topk` over flattened scores (k = 10) → (i, j) → characters `(word_start[i], word_end[j])` → answer = `context[a:b]`.
 - **MAP** = top-1 span.
-- **MBR:** after calibration, among the top-k pick `argmax_y Σ_y' p(y') · F1(y, y')` using positional word F1.
+- **MBR:** after calibration, among the top-k pick `argmax_y Σ_y' p(y') · [F1(y, y') + γ · EM(y, y')]`.
+  - F1 is positional word F1; EM(y, y') = 1 if the spans are identical.
+  - γ = `mbr_em_weight` (the proposal's F1:EM ratio), tuned on the validation split. γ = 0 is expected F1; a large γ approaches MAP.
 - **Note (low priority, same as §4.3):** the scorer compares *normalized strings*, so spans that normalize to the same text ("the Eiffel Tower", "Eiffel Tower", or a repeat elsewhere in the passage) are one answer to the metric, while MAP and MBR here split the probability between them. A cheap, decoding-only option is to group the top-k by `normalize_answer` text, add up their probabilities, and use the scorer's string F1 as the MBR utility. It needs no retraining and could be an extra E1 row. Don't restructure code for it.
 - **Calibration:** fit one temperature T on the validation split (minimize the NLL of the gold span).
 
@@ -186,9 +209,10 @@ loss = -torch.where(target > 0, target * logp, torch.zeros_like(logp)).sum(-1).m
 ## 5. Verifier
 
 ### 5.1 Candidates and targets
-- **Training:** spans sampled from the final reader's span distribution on its own training questions, at a temperature above 1 tuned on the validation split (plan §4.6). For the E2 ablation, use the cross-fitted readers' top-k on the held-out fold (§5.2) instead. In both cases add the gold span if missing, plus boundary variants (±1 word at either end, valid only), plus siblings (§3.5). Deduplicate.
+- **Training:** spans sampled from the final reader's span distribution on its own training questions, at a temperature above 1 tuned on the validation split (plan §4.6). For the E2 ablation, use the cross-fitted readers' top-k on the held-out fold (§5.2) instead. In both cases add the gold span if missing, plus boundary variants (±1 word at either end, valid only), plus siblings (§3.5) if `sibling_negatives: true`. Deduplicate.
 - **Inference:** the reader's top-k.
 - **Loss:** listwise. Softmax over a question's candidate scores; F1-soft target over the candidates (same α, τ form as §4.3); cross-entropy.
+- **Unanswerable negatives** (`unanswerable_negatives: true`, row 5): append a null candidate with a fixed score of 0 to every training question's list. Answerable questions give it target 0; the unanswerable questions of §3.6 put all target mass on it. Inference never adds the null candidate.
 - Track **top-k recall** (fraction of questions whose gold span is among the candidates). It caps verifier accuracy.
 
 ### 5.2 Cross-fitting (K = 3, E2 ablation only)
@@ -199,31 +223,42 @@ Not the default: the default candidates are sampled from the final reader (§5.1
 3. Train the verifier on these candidates.
 4. At test time use the reader trained on all non-validation training articles.
 
-### 5.3 In-place markers
-- Insert `<a>` and `</a>` tokens around the candidate's subwords in the input.
-- Head: concatenate hidden states at `<a>`, `</a>`, `[CLS]` → MLP → one score.
+### 5.3 In-place markers (both variants)
+- Insert the marker strings `<a>` and `</a>` into the passage text around the candidate's characters, with a space on each side, then tokenize. Register them as special tokens in each variant's tokenizer and resize its embeddings. Inserting text before tokenizing works with both tokenizers.
+- Input: the question and the passage. Most passages fit one window. Otherwise keep the window (§3.4, reader tokenizer) in which the candidate is most central, as a character range, and give both variants that same range, so E2 compares backbones on identical text.
+- Head: concatenate hidden states at `<a>`, `</a>` and the first token (`[CLS]`) → MLP → one score.
 - One forward pass per candidate.
 
-### 5.4 Levitated markers
+### 5.4 Variants (E2)
+- **`shared_lora`:** load the frozen final reader and add PEFT LoRA (`verifier.lora`) to its encoder.
+  - Reader passes run with the adapter disabled (`with model.disable_adapter():`); verifier passes run with it enabled.
+  - Train only the LoRA weights, the two marker embeddings and the verifier head. Keep the existing embedding rows frozen, so the reader is unchanged (test V4).
+  - `peft` is not yet in `pyproject.toml`. Add it with `uv lock` and pass the cluster smoke test first (README, "Dependencies").
+- **`separate`:** `verifier.separate_model` (ModernBERT-large), fully fine-tuned with its own tokenizer.
+  - Before first use, add it to `MODELS` in `squadqa/download_model.py` with a pinned revision and SHA-256, and load it with an explicit dtype (§9).
+  - Smoke-test it like any new training script (§9).
+
+### 5.5 Levitated markers (P3)
 - **Layout:** `[text tokens][S_1 E_1 … S_k E_k][padding]`. Pad questions with fewer candidates using dummy marker pairs, excluded from attention and loss.
 - **Position IDs:** text 0 … n−1; `S_c` = position of `first_tok` of the candidate's first word; `E_c` = position of `last_tok` of its last word.
 - **Mask:** text queries see text keys only. Marker queries see text keys plus their own partner marker.
 - **DeBERTa relative positions:** build `relative_pos` from the position IDs using Hugging Face's own `build_relative_position` / `make_log_bucket_position` (do not reimplement the bucketing). Pass it to the encoder. First verify that the installed Hugging Face version accepts `relative_pos` and a 3D attention mask; if not, wrap `DebertaV2Encoder`.
 - **Head:** concatenate `[h(S_c); h(E_c); h_text(first_tok of start word); h_text(last_tok of end word); h(CLS)]` → MLP → one score.
 
-### 5.5 Shared variant
+### 5.6 Shared levitated variant (P3)
 - **Option A (fully shared):** one pass; loss = reader loss + β × verifier loss; all weights train.
 - **Option B (default):** train the reader, then freeze it. Marker tokens use LoRA-adapted weights (`W + ΔW`, applied only where `is_marker` is true); text tokens use frozen base weights. Compute text keys and values under `torch.no_grad()`. Train only the LoRA weights, marker embeddings, and marker head.
 - **Inference (default, simple):** reader pass → top-k → one full levitated pass (≈1.05× a reader pass). The reader's span scores are unchanged by the markers.
 - **KV cache (optional):** keep each layer's text keys and values from the reader pass and run only the marker tokens against them.
 
-### 5.6 Acceptance tests (all must pass before any verifier training run)
+### 5.7 Acceptance tests (those for the variant in use must pass before any verifier training run)
 | ID | Test | Pass condition |
 |---|---|---|
-| V1 | Text unchanged | Text-token outputs with markers appended equal a plain pass without markers (fp32: `atol=1e-5`) |
-| V2 | Order independence | Shuffling marker order changes no candidate score |
-| V3 | Cache equality | KV-cache scores equal single-pass scores |
-| V4 | Reader frozen (option B) | Reader predictions identical before and after verifier training |
+| V1 | Text unchanged (levitated, P3) | Text-token outputs with markers appended equal a plain pass without markers (fp32: `atol=1e-5`) |
+| V2 | Order independence (levitated, P3) | Shuffling marker order changes no candidate score |
+| V3 | Cache equality (levitated, P3) | KV-cache scores equal single-pass scores |
+| V4 | Reader frozen (`shared_lora`; levitated option B) | Reader predictions identical before and after verifier training |
+| V5 | Marker round trip (both variants) | For each tokenizer: removing the markers from the marked text restores the passage, and the text between them equals the candidate |
 
 ---
 
@@ -234,10 +269,11 @@ Not the default: the default candidates are sampled from the final reader (§5.1
   - *Boundary fix:* the answers overlap but differ after normalization.
   - *Answer switch:* the answers do not overlap.
 - Report per-seed results, mean ± std over 3 seeds, and paired bootstrap 95% confidence intervals for headline differences.
+- Score every frozen system on dev, Adversarial SQuAD (AddSent, AddOneSent) and the four SQuAD-Shifts sets, and report each separately.
 
 ---
 
-## 7. FlexAttention version of DeBERTa attention (optional, W5+)
+## 7. FlexAttention version of DeBERTa attention (P3, optional)
 
 Only after P1 experiments are done. Goal: a fused kernel and a simpler levitated mask, without hand-written kernel code.
 
@@ -308,6 +344,7 @@ out = flex_attention(q_c, k_c, v, score_mod=score_mod,
 - **Pinned and offline.**
   - Load with `revision=MODELS[name]["revision"]` from `squadqa/download_model.py`.
   - Set `HF_HUB_OFFLINE=1` in jobs, so a missing file raises an error instead of downloading something unpinned.
+  - Only `microsoft/deberta-v3-large` is pinned so far. Pin `microsoft/deberta-v3-base` and ModernBERT (base for development, large for results) the same way before using them.
 - **Smoke-test every new training script** before a full run.
   - Train a few dozen steps with a checkpoint, then run again with the same run id.
   - Check that parameters and optimizer state are fp32, the loss falls, the run resumes at the saved step, and the official scorer accepts the predictions.
