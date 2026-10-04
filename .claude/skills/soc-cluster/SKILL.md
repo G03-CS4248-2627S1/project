@@ -34,7 +34,13 @@ Keep `$USER` and `$HOME` inside single quotes so they expand on the cluster, for
   - Request a GPU with bf16 support: `--gpus=a100-40`, `a100-80`, `h100-96`, `h100-47` or `h200-141`.
 - **There are two login nodes.** `xlogin` is round-robin DNS over xlogin1 and xlogin2, so each connection can land on either (checked 2026-09-28). A tmux session is visible only from the node it started on.
 - **Job chains work** (2026-09-28): `--dependency=afterok:<job id> --kill-on-invalid-dep=yes` started the second job 2 s after the first ended, with no connection open.
-  - A job that hits its time limit ends as TIMEOUT, which `afterok` treats as failure, so resume chains use `afterany`. That case is untested.
+  - A job that hits its time limit ends as TIMEOUT, which `afterok` treats as failure, so resume chains use `afterany`. `afterany` started a resume as soon as the first job ended normally (jobs 907905 → 907906, 2026-10-04); the TIMEOUT case is still untested.
+- **`soc.sh` live-tested (2026-10-04, issue #17):**
+  - `submit` refuses when the clone is at another commit: it printed both commits and the update command, and queued nothing.
+  - `SQUADQA_COMMIT` reaches the job: a 1-minute CPU job (908877, `--wrap`) printed it, equal to the clone's and the local HEAD.
+  - `jobs` lists pending and running jobs, with the reason (`Dependency`, `Resources`).
+  - `run` forwards stdin: `echo hi | soc.sh run cat` prints `hi` (only the connection check uses `ssh -n`).
+  - `python -m squadqa.download_external` in a CPU job (`srun --partition=normal`) builds `data/external/` with the same SHA-256 for all 14 files as a laptop build, Adversarial SQuAD included.
 - **A pending job can be changed** with `scontrol update` (2026-09-28), for example `scontrol update JobId=<id> TresPerJob=gres/gpu:a100-40 ExcNodeList=xgph[10-15],xgpj0`. `ExcNodeList` replaces the list, so repeat `BROKEN_NODES` from `soc.sh`.
 - **Slurm mail** is configured (`MailDomain=comp.nus.edu.sg`), so `--mail-type` without `--mail-user` mails `<soc id>@comp.nus.edu.sg`. Delivery is unconfirmed.
 - **uv lives at `~/.local/bin/uv`** and is not on `PATH` in non-interactive shells.
