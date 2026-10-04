@@ -2,8 +2,8 @@
 
 When each part of the project happens, what blocks what, and what to cut if we fall behind.
 
-- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.2). **How:** [implementation_details.md](implementation_details.md). **When:** this file. **How we work:** [workflow.md](workflow.md).
-- This file expands plan §9 into stages. The plan's W1–W7 are course weeks 7–13. Section numbers below (§4.3, E3, …) refer to the plan.
+- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.3). **How:** [implementation_details.md](implementation_details.md). **When:** this file. **How we work:** [workflow.md](workflow.md).
+- This file expands plan §12 into stages. The plan's W1–W7 are course weeks 7–13. Section numbers below (§5, E3, …) refer to the plan.
 - If this file and the plan disagree on scope, stop and ask a human.
 - Drafted 2026-09-28 (week 7). Moved to the submitted proposal's schedule on 2026-10-03 (plan v1.0). Whoever changes a milestone or a stage's scope updates this file and tells the team.
 
@@ -51,7 +51,7 @@ The Sunday buffers are the only slack. The deadline doesn't move, so any slip pa
 | Scored on | Validation split | Dev (test set), Adversarial SQuAD and SQuAD-Shifts, with bootstrap tests |
 | When | Inside each stage | As soon as that component is frozen |
 
-Each ladder row (plan §6.1) depends only on the rows above it. Launch a row's large 3-seed runs as soon as its stage freezes; don't wait for stage 5. Dev is scored only once, in stage 5, on frozen systems.
+Each ladder row (plan §9.1) depends only on the rows above it. Launch a row's large 3-seed runs as soon as its stage freezes; don't wait for stage 5. Dev is scored only once, in stage 5, on frozen systems.
 
 | Stage | Development ablations (base) | Final large runs launched |
 |---|---|---|
@@ -116,8 +116,8 @@ These wait on a result, but are short and off the critical path:
 - **1.3 Data pipeline.** 384-token windows with stride 128; offset map between characters, subword tokens and words; dynamic padding and length bucketing (spec §3.2–3.4). The offset unit test must pass before any training.
 - **1.4 Evaluation pipeline.** Model outputs → top span → `predictions.json` → official scorer. Windows of one passage share a softmax. Includes Adversarial SQuAD (worst-case score, spec §6) and SQuAD-Shifts, both from `download_external`.
 - **1.5 Hyperparameter tuning and baseline (ladder row 0).** Base for development, large for results. Start the 3 large seeds.
-- **1.6 First decoding comparison.** MAP vs. MBR on the baseline (plan §4.5), with boundary variants grouped and F1 and EM over content words (spec §4.4). Also measure the **normalization gap**: on validation, how often the prediction matches the gold span exactly by position vs. by the official EM. It bounds what normalized training targets (2.2) can gain.
-- **1.7 Cross-span diagnostic (E3) on the baseline.** It decides how much effort the joint head deserves (plan §4.3; recipe in spec §4.5).
+- **1.6 First decoding comparison.** MAP vs. MBR on the baseline (plan §7), with boundary variants grouped and F1 and EM over content words (spec §4.4). Also measure the **normalization gap**: on validation, how often the prediction matches the gold span exactly by position vs. by the official EM. It bounds what normalized training targets (2.2) can gain.
+- **1.7 Cross-span diagnostic (E3) on the baseline.** It decides how much effort the joint head deserves (plan §5; recipe in spec §4.5).
 - **1.8 Dependencies and pins** for stage 2 and the verifier (§3.3).
 
 **Done when:** the offset test passes, the pipeline baseline matches the sandbox quick fine-tune (about 89 validation F1), and the first MAP vs. MBR numbers exist.
@@ -128,8 +128,8 @@ These wait on a result, but are short and off the critical path:
 
 **Goal:** settle the reader design. This is the main blocker (§3.2).
 
-- **2.1 Compound objective** (plan §4.3; spec §4.3). Joint head plus the auxiliary independent loss, against the baseline on base. Ablate W init, the length bonus, and joint only.
-- **2.2 F1-weighted targets** (plan §4.4), against the baseline on base. Sweep α (the F1:EM loss ratio) and τ, and compare positional with normalized F1 in the targets (spec §4.3), sized by the gap measured in 1.6.
+- **2.1 Compound objective** (plan §5; spec §4.3). Joint head plus the auxiliary independent loss, against the baseline on base. Ablate W init, the length bonus, and joint only.
+- **2.2 F1-weighted targets** (plan §6), against the baseline on base. Sweep α (the F1:EM loss ratio) and τ, and compare positional with normalized F1 in the targets (spec §4.3), sized by the gap measured in 1.6.
 - **2.3 Combine** the two only if both beat the baseline on the validation split. Otherwise keep the one that does, and report the other as an ablation.
 - **2.4 Rerun E3 on the new head.** The before-and-after comparison is the E3 result.
 - **2.5 Freeze the reader** (Thu 15 Oct) through a freeze PR (workflow.md §5.3). Then launch ladder rows 1–2 on large, 3 seeds, from `main`.
@@ -145,9 +145,9 @@ These wait on a result, but are short and off the critical path:
 - **3.1 Candidate extraction.** Top-k spans per question (k ≈ 10), merged across windows.
 - **3.2 Calibration.** One temperature fit on the validation split; report ECE.
 - **3.3 E1 on the stage-1 models.** {one-hot, F1-soft targets} × {MAP, MBR}, with the γ (F1:EM decoding ratio) and τ sweeps. Ladder row 3 needs no new training.
-- **3.4 Verifier training candidates (critical path).** Sample spans from the final reader's span distribution on its own training questions, at a temperature above 1 (plan §4.6). Check on the validation split that they resemble the reader's real mistakes, and measure top-k recall, the verifier's ceiling. The cross-fitting readers for the E2 ablation (3 folds, on base) are off the critical path.
-- **3.5 Both verifier variants begin** (plan §4.6; spec §5.3–5.4): shared DeBERTa + LoRA, and separate ModernBERT.
-- **3.6 Row 5 reader.** Retrain the frozen reader configuration with AdversarialQA added (plan §4.8), large, 3 seeds.
+- **3.4 Verifier training candidates (critical path).** Sample spans from the final reader's span distribution on its own training questions, at a temperature above 1 (plan §4.3). Check on the validation split that they resemble the reader's real mistakes, and measure top-k recall, the verifier's ceiling. The cross-fitting readers for the E2 ablation (3 folds, on base) are off the critical path.
+- **3.5 Both verifier variants begin** (plan §4.3; spec §5.3–5.4): shared DeBERTa + LoRA, and separate ModernBERT.
+- **3.6 Row 5 reader.** Retrain the frozen reader configuration with AdversarialQA added (plan §4.5), large, 3 seeds.
 - **3.7 Decide on P3** (levitated verifier, E4, E5), based on the schedule.
 
 **Done when:** sampled candidates exist for all of train, decoding works end to end, and both variants have trained on base.

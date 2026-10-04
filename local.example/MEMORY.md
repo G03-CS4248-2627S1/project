@@ -9,7 +9,7 @@ This file is gitignored, so only you and your AI assistant see it. The assistant
 ## Me
 - Name:
 - SoC unix id:
-- Current focus (roles are flexible; plan §10 lists the areas):
+- Current focus (roles are flexible; plan §13 lists the areas):
 - AI assistant(s):
 - Preferences for how the assistant works with me:
 
