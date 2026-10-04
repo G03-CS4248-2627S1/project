@@ -161,3 +161,11 @@ def test_predict_split_can_skip_candidates(tok, tmp_path):
                     temperature=1.0, save_candidates=False)
     assert (tmp_path / "predictions_validation_map.json").exists()
     assert not (tmp_path / "candidates_validation.json").exists()
+
+def test_micro_batches_cap_windows_and_keep_questions_whole():
+    n_windows = [1, 3, 1, 1, 5, 2]
+    passes = T.micro_batches(list(range(6)), 4, n_windows)
+    assert [q for p in passes for q in p] == list(range(6))                  # order kept, nothing lost
+    assert passes == [[0, 1], [2, 3], [4], [5]]
+    assert all(sum(n_windows[q] for q in p) <= 4 or len(p) == 1 for p in passes)
+    assert T.micro_batches([0, 1, 2], 2) == [[0, 1], [2]]                     # one window each by default

@@ -93,8 +93,25 @@ def load_checkpoint(path: Path, model, opt=None, sched=None) -> int:
     return ck["step"]
 
 
-def micro_batches(example_ids: list[int], per_device: int) -> list[list[int]]:
-    return [example_ids[k:k + per_device] for k in range(0, len(example_ids), per_device)]
+def micro_batches(example_ids: list[int], per_device: int, n_windows: list[int] | None = None) -> list[list[int]]:
+    """Split one optimizer step's questions into forward passes of at most per_device windows.
+
+    A question's windows always share a pass (one softmax, spec §3.4); a question with more
+    windows than per_device gets a pass of its own. Counting questions instead let a pass grow
+    past the cap with multi-window questions and ran deberta-v3-large out of memory on an
+    A100-40 (jobs 909235-909236, 2026-10-04). n_windows: windows per question (default 1 each).
+    """
+    out, cur, used = [], [], 0
+    for e in example_ids:
+        w = n_windows[e] if n_windows is not None else 1
+        if cur and used + w > per_device:
+            out.append(cur)
+            cur, used = [], 0
+        cur.append(e)
+        used += w
+    if cur:
+        out.append(cur)
+    return out
 
 
 def train(model, feats: D.Features, cfg: dict, seed: int, pad_id: int, ckpt_path: Path, per_device: int,
@@ -113,6 +130,7 @@ def train(model, feats: D.Features, cfg: dict, seed: int, pad_id: int, ckpt_path
     check_fp32(model, opt)
     use_amp = device.startswith("cuda")
     lengths = feats.question_lengths()
+    n_windows = [len(ex.windows) for ex in feats.examples]
     model.train()
     losses, window_sum, loss_sum, loss_n, t0 = [], 0, 0.0, 0, time.time()
     batches, batches_epoch = None, -1
@@ -122,7 +140,7 @@ def train(model, feats: D.Features, cfg: dict, seed: int, pad_id: int, ckpt_path
             batches, batches_epoch = D.bucket_batches(lengths, t["effective_batch"], seed, epoch), epoch
         batch_ids = batches[pos]
         step_loss = 0.0
-        for ids in micro_batches(batch_ids, per_device):
+        for ids in micro_batches(batch_ids, per_device, n_windows):
             rows = feats.batch(ids)
             b = {k: v.to(device, non_blocking=True) for k, v in D.collate(rows, pad_id).items()}
             with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
@@ -156,7 +174,8 @@ def train(model, feats: D.Features, cfg: dict, seed: int, pad_id: int, ckpt_path
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Train a reader, then predict and score the validation split.")
     C.add_run_args(parser)
-    parser.add_argument("--per-device-batch", type=int, default=16, help="questions per forward pass")
+    parser.add_argument("--per-device-batch", type=int, default=16,
+                        help="windows per forward pass (a question's windows stay together); 8 for large on an A100-40")
     parser.add_argument("--max-steps", type=int, help="smoke runs: total optimizer steps instead of the epochs")
     parser.add_argument("--stop-after", type=int, help="smoke runs: exit after this step without predicting")
     parser.add_argument("--eval-each-epoch", action="store_true",

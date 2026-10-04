@@ -7,6 +7,7 @@
 # Smoke run (spec §9): soc.sh submit slurm/train_reader.sbatch --max-steps 40 --stop-after 30 --set train.checkpoint_every=20
 #   then resubmit with RUN_ID=<that run id>, the same args and no --stop-after; it resumes at step 20 and predicts.
 # One large epoch takes about 15 minutes on an A100 (plan §12.1), plus about 2 minutes of featurizing.
+# deberta-v3-large on an A100-40 needs --per-device-batch 8 (windows per forward pass); 16 ran out of memory.
 # The log goes to logs/<job name>-<job id>.out. Partitions: gpu (up to 3 hours) or gpu-long (up to 3 days).
 #SBATCH --job-name=train_reader
 #SBATCH --partition=gpu
