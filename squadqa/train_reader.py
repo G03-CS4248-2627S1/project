@@ -12,12 +12,19 @@
 - Then writes validation predictions, candidates, calibration and metrics.json to
   results/<run_id>/ (squadqa.predict, squadqa.evaluate).
 
+--eval-each-epoch also scores validation after every epoch but the last, into
+results/<run_id>/epoch<k>/ (no candidates file), and lists all epochs under "per_epoch" in
+metrics.json. Row 0 tunes the number of epochs this way (#23): one 3-epoch run per learning
+rate. The epoch-k model of a longer run is an approximation of a k-epoch run, because its
+learning rate has not decayed to zero yet; confirm the chosen setting with a real run.
+
 --max-steps and --stop-after are for smoke runs (spec §9): --max-steps shortens the schedule,
 --stop-after exits after that step without predicting, as if the job had been killed; resume
 with the same arguments minus --stop-after (it is not part of the config, so the resume check passes).
 """
 
 import argparse
+import json
 import os
 import time
 from pathlib import Path
@@ -28,6 +35,7 @@ import torch
 
 from squadqa import config as C
 from squadqa import data as D
+from squadqa import evaluate as E
 
 CHECKPOINT = "checkpoint.pt"
 
@@ -85,13 +93,32 @@ def load_checkpoint(path: Path, model, opt=None, sched=None) -> int:
     return ck["step"]
 
 
-def micro_batches(example_ids: list[int], per_device: int) -> list[list[int]]:
-    return [example_ids[k:k + per_device] for k in range(0, len(example_ids), per_device)]
+def micro_batches(example_ids: list[int], per_device: int, n_windows: list[int] | None = None) -> list[list[int]]:
+    """Split one optimizer step's questions into forward passes of at most per_device windows.
+
+    A question's windows always share a pass (one softmax, spec §3.4); a question with more
+    windows than per_device gets a pass of its own. Counting questions instead let a pass grow
+    past the cap with multi-window questions and ran deberta-v3-large out of memory on an
+    A100-40 (jobs 909235-909236, 2026-10-04). n_windows: windows per question (default 1 each).
+    """
+    out, cur, used = [], [], 0
+    for e in example_ids:
+        w = n_windows[e] if n_windows is not None else 1
+        if cur and used + w > per_device:
+            out.append(cur)
+            cur, used = [], 0
+        cur.append(e)
+        used += w
+    if cur:
+        out.append(cur)
+    return out
 
 
 def train(model, feats: D.Features, cfg: dict, seed: int, pad_id: int, ckpt_path: Path, per_device: int,
-          device: str, max_steps: int | None = None, stop_after: int | None = None, log=print) -> dict:
-    """Train with resume from ckpt_path. Returns {"steps", "stopped_early", "losses", "minutes"}."""
+          device: str, max_steps: int | None = None, stop_after: int | None = None, log=print,
+          on_epoch_end=None) -> dict:
+    """Train with resume from ckpt_path. Returns {"steps", "stopped_early", "losses", "minutes"}.
+    on_epoch_end(k) runs after epoch k (not the last), once a checkpoint of that step is saved."""
     t = cfg["train"]
     n_batches = len(D.bucket_batches(feats.question_lengths(), t["effective_batch"], seed, 0))
     total_steps = max_steps or n_batches * t["epochs"]
@@ -103,6 +130,7 @@ def train(model, feats: D.Features, cfg: dict, seed: int, pad_id: int, ckpt_path
     check_fp32(model, opt)
     use_amp = device.startswith("cuda")
     lengths = feats.question_lengths()
+    n_windows = [len(ex.windows) for ex in feats.examples]
     model.train()
     losses, window_sum, loss_sum, loss_n, t0 = [], 0, 0.0, 0, time.time()
     batches, batches_epoch = None, -1
@@ -112,7 +140,7 @@ def train(model, feats: D.Features, cfg: dict, seed: int, pad_id: int, ckpt_path
             batches, batches_epoch = D.bucket_batches(lengths, t["effective_batch"], seed, epoch), epoch
         batch_ids = batches[pos]
         step_loss = 0.0
-        for ids in micro_batches(batch_ids, per_device):
+        for ids in micro_batches(batch_ids, per_device, n_windows):
             rows = feats.batch(ids)
             b = {k: v.to(device, non_blocking=True) for k, v in D.collate(rows, pad_id).items()}
             with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
@@ -132,8 +160,12 @@ def train(model, feats: D.Features, cfg: dict, seed: int, pad_id: int, ckpt_path
             log(f"step {step}/{total_steps} loss {loss_sum / loss_n:.4f} lr {sched.get_last_lr()[0]:.2e} "
                 f"{window_sum / max(el, 1e-9):.1f} windows/s {el / 60:.1f} min")
             loss_sum, loss_n = 0.0, 0
-        if step % t["checkpoint_every"] == 0 or step == total_steps:
+        epoch_end = on_epoch_end is not None and step % n_batches == 0 and step < total_steps
+        if step % t["checkpoint_every"] == 0 or step == total_steps or epoch_end:
             save_checkpoint(ckpt_path, model, opt, sched, step)
+        if epoch_end:
+            on_epoch_end(step // n_batches)
+            model.train()
         if stop_after is not None and step >= stop_after and step < total_steps:
             return {"steps": step, "stopped_early": True, "losses": losses, "minutes": (time.time() - t0) / 60}
     return {"steps": step, "stopped_early": False, "losses": losses, "minutes": (time.time() - t0) / 60}
@@ -142,9 +174,12 @@ def train(model, feats: D.Features, cfg: dict, seed: int, pad_id: int, ckpt_path
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Train a reader, then predict and score the validation split.")
     C.add_run_args(parser)
-    parser.add_argument("--per-device-batch", type=int, default=16, help="questions per forward pass")
+    parser.add_argument("--per-device-batch", type=int, default=16,
+                        help="windows per forward pass (a question's windows stay together); 8 for large on an A100-40")
     parser.add_argument("--max-steps", type=int, help="smoke runs: total optimizer steps instead of the epochs")
     parser.add_argument("--stop-after", type=int, help="smoke runs: exit after this step without predicting")
+    parser.add_argument("--eval-each-epoch", action="store_true",
+                        help="also score validation after every epoch, into results/<run_id>/epoch<k>/")
     args = parser.parse_args(argv)
 
     cfg = C.load_config(args.config, args.set)
@@ -163,14 +198,25 @@ def main(argv: list[str] | None = None) -> None:
     print(f"{len(feats.examples)} training questions, {len(feats.windows)} windows, "
           f"{len(feats.skipped)} skipped; featurized in {time.time() - t0:.0f} s", flush=True)
     model = Reader(load_encoder(cfg["model"]), cfg).to(device)
+    from squadqa.predict import predict_split, predict_validation
+
+    def eval_epoch(k: int) -> None:
+        epoch_dir = run_dir / f"epoch{k}"
+        epoch_dir.mkdir(exist_ok=True)
+        out = predict_split(model, tok, cfg, epoch_dir, device, "validation", D.load_split("validation"),
+                            E.load_eval_set("validation"), save_candidates=False)
+        C.write_json(epoch_dir / "metrics.json", out)
+        print(f"epoch {k}:", {rule: (round(m["exact"], 2), round(m["f1"], 2)) for rule, m in out["validation"].items()},
+              flush=True)
+
     result = train(model, feats, cfg, args.seed, tok.pad_token_id, ckpt_dir / CHECKPOINT, args.per_device_batch,
-                   device, args.max_steps, args.stop_after, log=lambda m: print(m, flush=True))
+                   device, args.max_steps, args.stop_after, log=lambda m: print(m, flush=True),
+                   on_epoch_end=eval_epoch if args.eval_each_epoch else None)
     if result["stopped_early"]:
         print(f"stopped after step {result['steps']} (--stop-after); rerun with --run-id {run_dir.name} to resume",
               flush=True)
         return
 
-    from squadqa.predict import predict_validation
     peak_train = torch.cuda.max_memory_allocated() / 2**30 if device == "cuda" else 0.0
     if device == "cuda":
         torch.cuda.empty_cache()                        # the optimizer is gone; release its cached blocks
@@ -180,6 +226,11 @@ def main(argv: list[str] | None = None) -> None:
     metrics.update({"steps": result["steps"], "train_minutes_last_job": round(result["minutes"], 1), "gpu": gpu,
                     "per_device_batch": args.per_device_batch,
                     "peak_gpu_gb": {"train": round(peak_train, 1), "predict": round(peak_predict, 1)}})
+    if args.eval_each_epoch:
+        per_epoch = {p.name[5:]: json.loads((p / "metrics.json").read_text(encoding="utf-8"))["validation"]
+                     for p in sorted(run_dir.glob("epoch*")) if (p / "metrics.json").exists()}
+        per_epoch[str(cfg["train"]["epochs"])] = metrics["validation"]
+        metrics["per_epoch"] = per_epoch
     C.write_json(run_dir / "metrics.json", metrics)
     print("RESULT", {k: metrics[k] for k in ("validation", "steps")}, flush=True)
 

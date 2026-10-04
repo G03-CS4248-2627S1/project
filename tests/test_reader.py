@@ -137,3 +137,35 @@ def test_predict_split_writes_scored_outputs(tok, tmp_path):
     assert out["validation"]["map"]["total"] == len(questions)
     preds = E.load_predictions(tmp_path / "predictions_validation_mbr.json")
     assert set(preds) == {q.id for q in questions} and all(a.strip() for a in preds.values())
+
+def test_epoch_end_hook_runs_after_each_epoch_but_the_last(small_train, tok, tmp_path):
+    cfg = load_config(None, ["span_head=standard", "train.head_dropout=0.0", "train.effective_batch=4",
+                             "train.epochs=3", "train.checkpoint_every=1000"])
+    model = H.Reader(tiny_encoder(), cfg)
+    seen = []
+
+    def hook(k):
+        seen.append((k, torch.load(tmp_path / "ck.pt", weights_only=False)["step"]))
+        model.eval()                                      # what prediction does
+    out = T.train(model, small_train, cfg, 0, tok.pad_token_id, tmp_path / "ck.pt", 2, "cpu", log=lambda m: None,
+                  on_epoch_end=hook)
+    assert seen == [(1, 6), (2, 12)] and out["steps"] == 18       # 24 questions / 4 per step = 6 steps an epoch
+    assert model.training
+
+
+def test_predict_split_can_skip_candidates(tok, tmp_path):
+    val = D.load_split("validation")
+    questions = [q for q in val if q.title == val[0].title]
+    dataset = [a for a in E.load_eval_set("validation") if a["title"] == val[0].title]
+    P.predict_split(H.Reader(tiny_encoder(), CFG), tok, CFG, tmp_path, "cpu", "validation", questions, dataset,
+                    temperature=1.0, save_candidates=False)
+    assert (tmp_path / "predictions_validation_map.json").exists()
+    assert not (tmp_path / "candidates_validation.json").exists()
+
+def test_micro_batches_cap_windows_and_keep_questions_whole():
+    n_windows = [1, 3, 1, 1, 5, 2]
+    passes = T.micro_batches(list(range(6)), 4, n_windows)
+    assert [q for p in passes for q in p] == list(range(6))                  # order kept, nothing lost
+    assert passes == [[0, 1], [2, 3], [4], [5]]
+    assert all(sum(n_windows[q] for q in p) <= 4 or len(p) == 1 for p in passes)
+    assert T.micro_batches([0, 1, 2], 2) == [[0, 1], [2]]                     # one window each by default

@@ -57,6 +57,7 @@ Entry points run from the repo root as `python -m squadqa.<module>`, with the co
 
 - **Run ids:** `<date>-<experiment>-s<seed>-j<Slurm job id>`, as in AGENTS.md. `<experiment>` is the config file name, for example `row1-compound`.
 - **Each run writes** `results/<run_id>/` with the resolved config (after overrides), the git commit, the seed, `metrics.json`, and validation predictions. Final scoring adds the dev and robustness predictions (§6).
+- **Commit everything in a run's folder except `candidates_*.json`** (about 4 MB each, decided 2026-10-04): config, `run.json`, metrics, calibration and predictions, including `epoch<k>/` folders. Candidates stay on the cluster; regenerate them from the run's checkpoint with `python -m squadqa.predict --run-id <run_id>` when needed (#25 uses the final row-0 runs).
 - **Checkpoints** stay in your own `$SQUADQA_SCRATCH/runs/<run_id>/` on the cluster and are never committed.
 - **Need someone else's checkpoint?** Retrain it from the frozen config on `main` in your own clone. A large reader epoch takes about 15 minutes (plan §12.1), which is simpler and safer than copying files between accounts.
 - **`data/external/`** is rebuilt in each clone with `python -m squadqa.download_external`, locally and on the cluster (in a CPU job). It is never committed.
