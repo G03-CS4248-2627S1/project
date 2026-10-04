@@ -4,7 +4,7 @@
 
 ## Results
 
-<!-- For experiment PRs: run ids, what was compared, and the outcome against the seed spread (plan §12.3). Delete otherwise. -->
+<!-- For experiment PRs: run ids, what was compared, and the outcome against the seed spread (plan §15.3). Delete otherwise. -->
 
 ## Checklist (workflow.md §4.3)
 

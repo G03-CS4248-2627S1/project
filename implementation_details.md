@@ -2,7 +2,7 @@
 
 Implementation spec for coding agents and team members.
 
-- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.2). **How:** this file. **When:** [timeline.md](timeline.md). **How we work:** [workflow.md](workflow.md).
+- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.3). **How:** this file. **When:** [timeline.md](timeline.md). **How we work:** [workflow.md](workflow.md).
 - Week labels such as W2 or W5+ are plan weeks: W1–W7 are course weeks 7–13.
 - If this file and the plan disagree, stop and ask a human.
 
@@ -42,7 +42,7 @@ mbr_utility: normalized                # normalized = content-word F1/EM, bounda
 f1_target: normalized                  # normalized = content-word F1, boundary variants exact | positional (ablation; §4.3)
 calibration: temperature               # one T, fit on validation split
 extra_train_data: []                   # row 5: [adversarialqa]; augmentation (P2) adds augmented
-train:                                 # reader fine-tuning: the plan's sandbox recipe (plan §12.1); lr and epochs tuned in row 0 (plan §12.3)
+train:                                 # reader fine-tuning: the plan's sandbox recipe (plan §15.1); lr and epochs tuned in row 0 (plan §15.3)
   lr: 2.0e-5                           # write floats with a dot: YAML reads 2e-5 as a string
   epochs: 1
   warmup_frac: 0.1                     # linear schedule, warmup over this fraction of the steps
@@ -59,7 +59,7 @@ verifier:
   lora: {rank: 16, alpha: 32, targets: [query_proj, key_proj, value_proj]}   # shared_lora and option B; check module names in the installed HF version
   k_infer: 5
   k_sweep: [5, 10, 20, 30]             # levitated variants only (P3)
-  train_candidates: sampled            # sampled = drawn from the final reader's own span distribution (plan §4.6) | crossfit (E2 ablation)
+  train_candidates: sampled            # sampled = drawn from the final reader's own span distribution (plan §4.3) | crossfit (E2 ablation)
   crossfit_folds: 3                    # crossfit ablation only, on base
   sibling_negatives: false             # P2 ablation (§3.5)
   unanswerable_negatives: false        # row 5: SQuAD 2.0 unanswerable questions with a null candidate (§5.1)
@@ -127,12 +127,12 @@ def word_spans(text: str) -> list[tuple[int, int]]:
 - Drop any sibling whose word-overlap F1 with q's gold span is above 0.
 - Used only with `sibling_negatives: true` (P2 ablation).
 
-### 3.6 Additional data (ladder row 5, plan §4.8)
+### 3.6 Additional data (ladder row 5, plan §4.5)
 - All files come from `python -m squadqa.download_external`, which pins them and removes duplicate questions and answers. Its docstring says what each file may be used for.
 - It does **not** drop validation articles. Every training loader must:
   - drop each question whose article title is in the validation split (`squadqa.splits.load_val_titles()`);
   - raise an error if any passage matches a dev-v1.1 passage (whitespace-normalized).
-  - Measured 2026-10-03 (plan §12.2): 4,899 SQuAD 2.0 and 2,596 AdversarialQA training questions sit on validation articles; none sit on dev passages.
+  - Measured 2026-10-03 (plan §15.2): 4,899 SQuAD 2.0 and 2,596 AdversarialQA training questions sit on validation articles; none sit on dev passages.
 - **AdversarialQA** (`data/external/adversarialqa/train.json`, the combined split): extra reader training data when `extra_train_data` contains `adversarialqa`. Same format as SQuAD, one answer per question. `adversarialqa/dev.json` is built on dev-v1.1 passages, so never train or tune on it (rule 1).
 - **SQuAD 2.0 unanswerable questions** (`data/external/squad2/train-v2.0.json`): after duplicate removal this file holds only the unanswerable questions, all on train-v1.1 passages. They are verifier negatives when `unanswerable_negatives: true` (§5.1). Their candidates are the reader's top-k plus each `plausible_answers` span, located with its `answer_start` (rule 4) and converted to word spans (§3.2). Drop plausible answers that are not word-aligned.
 - **Augmentation (P2):** each rule (letter case, date format, name substitution) edits the passage, question and answer together, and carries `answer_start` through the edit by offset arithmetic, never by search (rule 4). The offset round-trip test (§9) must pass on the augmented set. Never augment validation articles or anything from dev-v1.1 (rules 1–2).
@@ -184,11 +184,14 @@ class JointSpanHead(nn.Module):
 ```
 
 ### 4.3 Loss
-Word-level positional F1 between span (i, j) and gold (i*, j*):
+Word-level positional F1 between a span y = (i, j) and the gold span y* = (i*, j*) (notation as in plan §6):
 ```
 overlap = max(0, min(j, j*) − max(i, i*) + 1)
 P = overlap / (j − i + 1);  R = overlap / (j* − i* + 1);  F1 = 2PR / (P + R)   (0 if overlap = 0)
-target = (1 − α) · onehot(gold) + α · softmax over {F1 > 0} of (F1 / τ)     # α, τ tuned on validation
+t(y) = (1 − α) · t_EM(y) + α · t_F1(y)              # α, τ tuned on validation
+t_EM: equal mass on y* and its boundary variants (ℓ_EM = 1 − EM = 0)
+t_F1(y) ∝ exp(−ℓ_F1(y, y*) / τ) where ℓ_F1 = 1 − F1 < 1 (spans overlapping the gold), else 0
+ℒ_soft = − Σ_y t(y) · log p(y)                    # α = 0: ℒ_CE = − log p(y*)
 ```
 - `α` is the proposal's F1:EM loss ratio: the exact-match (one-hot) and F1-weighted parts are mixed `(1 − α) : α`.
 **Note: this F1 differs from the official scorer's.** The scorer normalizes both strings first: lowercase, delete ASCII punctuation, remove *a*/*an*/*the*, collapse whitespace (`normalize_answer` in `qa/evaluate-v2.0.py`). Here, punctuation words and articles count, so a leading "the" or a trailing "." costs about 0.2 F1 (gold "Eiffel Tower" vs. "the Eiffel Tower": 0.8 here, 1.0 official). This is part of the F1-weighted-target work (timeline 2.2), selected by `f1_target`, with an ablation of `positional` vs. `normalized` on base:
@@ -205,7 +208,7 @@ loss = -torch.where(target > 0, target * logp, torch.zeros_like(logp)).sum(-1).m
 
 **Compound objective** (`span_head: compound`, ladder row 1; Fajcik et al. 2021): add the standard independent loss on the head's start and end scores.
 - Start logits are `u(h_s)` over the passage words of all of a question's windows (one softmax, as in §3.4); end logits are `v(h_e)`.
-- Cross-entropy against i* and j*, weighted by `aux_independent_weight`.
+- Cross-entropy against i* and j*, weighted by `aux_independent_weight` (ω in the plan): ℒ = ℒ_joint + ω · ℒ_ind.
 - This term always uses one-hot targets. The F1-weighted target (row 2) applies to the joint term only.
 - Decoding uses the joint scores s(i, j).
 
@@ -231,7 +234,7 @@ loss = -torch.where(target > 0, target * logp, torch.zeros_like(logp)).sum(-1).m
 ## 5. Verifier
 
 ### 5.1 Candidates and targets
-- **Training:** spans sampled from the final reader's span distribution on its own training questions, at a temperature above 1 tuned on the validation split (plan §4.6). For the E2 ablation, use the cross-fitted readers' top-k on the held-out fold (§5.2) instead. In both cases add the gold span if missing, plus boundary variants (±1 word at either end, valid only), plus siblings (§3.5) if `sibling_negatives: true`. Deduplicate.
+- **Training:** spans sampled from the final reader's span distribution on its own training questions, at a temperature above 1 tuned on the validation split (plan §4.3). For the E2 ablation, use the cross-fitted readers' top-k on the held-out fold (§5.2) instead. In both cases add the gold span if missing, plus boundary variants (±1 word at either end, valid only), plus siblings (§3.5) if `sibling_negatives: true`. Deduplicate.
 - **Inference:** the reader's top-k.
 - **Loss:** listwise. Softmax over a question's candidate scores; F1-soft target over the candidates (same α, τ form and the same `f1_target` as §4.3); cross-entropy.
 - **Unanswerable negatives** (`unanswerable_negatives: true`, row 5): append a null candidate with a fixed score of 0 to every training question's list. Answerable questions give it target 0; the unanswerable questions of §3.6 put all target mass on it. Inference never adds the null candidate.

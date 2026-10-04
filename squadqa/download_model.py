@@ -36,7 +36,7 @@ MODELS = {
             "pytorch_model.bin": "dd5b5d93e2db101aaf281df0ea1216c07ad73620ff59c5b42dccac4bf2eef5b5",
         },
     },
-    # Development reader (plan §12.3); pinned 2026-10-04.
+    # Development reader (plan §15.3); pinned 2026-10-04.
     "microsoft/deberta-v3-base": {
         "revision": "8ccc9b6f36199bec6961081d44eb72fb3f7353f3",
         "files": {

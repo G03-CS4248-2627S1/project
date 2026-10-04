@@ -1,5 +1,5 @@
 # Ladder row 0: the standard (independent) start/end head at the word level.
-# Frozen 2026-10-05 (#23): lr 2e-5 and 1 epoch, the defaults in base.yaml (the sandbox recipe, plan §12.1).
-# Tuning (plan §12.3): on base, 3e-5 x 3 epochs was best (88.44 F1); on large the sandbox recipe beat it
+# Frozen 2026-10-05 (#23): lr 2e-5 and 1 epoch, the defaults in base.yaml (the sandbox recipe, plan §15.1).
+# Tuning (plan §15.3): on base, 3e-5 x 3 epochs was best (88.44 F1); on large the sandbox recipe beat it
 # (89.64 vs. 89.22 F1, seed 0) at a third of the cost. Results: results/2026-10-04-row0-baseline-s0-j*.
 span_head: standard

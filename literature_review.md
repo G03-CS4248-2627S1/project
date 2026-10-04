@@ -8,6 +8,7 @@ Literature search run on 2026-09-28. Its conclusions went into plan v0.5 (§4.3,
   - **(plan ref)**: already cited in plan §15 and not re-checked here.
 - The searches were web searches, not a systematic review. "Nothing found" means nothing turned up in a few targeted searches. Before claiming something is new in the paper, check Google Scholar or Semantic Scholar.
 - Plan sections are cited as "plan §x" and spec sections as "spec §x".
+- **Plan section numbers here are those of plan v0.5–v1.2.** Plan v1.3 renumbered them: §4.3 → §5, §4.4 → §6, §4.5 → §7, §4.6 → §4.3, §5 → §8, §6.2 → §9.2, §15 → §18.
 
 ---
 
@@ -137,3 +138,69 @@ Literature search run on 2026-09-28. Its conclusions went into plan v0.5 (§4.3,
 2. **Joint head ablation (plan §6.2):** consider adding Fajcik et al.'s compound objective (joint + auxiliary independent loss). Not yet in the plan.
 3. **In-sample candidates:** RECONSIDER shows they can work, but its reader was trained on distantly supervised open-domain data, so it probably fit its training questions less closely than a SQuAD reader will. That is why plan §4.6 samples at a temperature above 1 and checks the candidates against real validation mistakes.
 4. **Before writing related work:** read the four abstract-only entries in full, and run the Scholar check for MBR in extractive QA.
+
+---
+
+## 7. Decoding and metric-aware training (search run 2026-10-04)
+
+Second search, for plan v1.3's 6.2 (expected-F1 training) and 7.2 (decoder–metric alignment). Plan section numbers in this section are v1.3's.
+
+**The two findings that changed the plan:** Norouzi et al. (2016) already prove the forward/reverse KL relation between F1-weighted targets and the risk loss, so plan §6.2 cites it rather than claiming it. Ye et al. (2012) formalize the decoder–metric question for the F-measure, the core of plan §7.2.
+
+### Theory: training for a metric vs. deciding for it
+
+**[Norouzi et al. (2016). Reward Augmented Maximum Likelihood for Neural Structured Prediction. NeurIPS.](https://arxiv.org/abs/1609.00150) (read, Section 2)**
+- RAML minimizes KL(q ‖ p_θ) and the entropy-regularized expected-reward objective minimizes KL(p_θ ‖ q), with q(y) ∝ exp(r(y, y*)/τ): "the same global optimum … but they optimize a KL divergence in opposite directions".
+- **For us:** exactly the relation in plan §6.2 between F1-weighted targets (RAML with r = F1) and the risk loss.
+
+**[Ye, Chai, Lee & Chieu (2012). Optimizing F-Measure: A Tale of Two Approaches. ICML.](https://arxiv.org/abs/1206.4625) (abstract)**
+- Empirical utility maximization (train for the metric) vs. the decision-theoretic approach (probability model + prediction with the highest expected F). Asymptotically equivalent with accurate models; the first is more robust to model misspecification, the second better with a good model.
+- **For us:** the 2 × 2 table of plan §7.2 in their terms, and an E1 prediction: metric-aware training helps most out of domain, MBR most where calibrated.
+
+**[Lipton, Elkan & Narayanaswamy (2014). Optimal Thresholding of Classifiers to Maximize F1 Measure. ECML PKDD.](https://arxiv.org/abs/1402.1892) (abstract)**
+- With calibrated probabilities, the F1-optimal threshold is half the optimal F1, not 0.5.
+- **For us:** the classification analogue of "faithful probabilities, metric-specific decoder".
+
+**[Dembczynski et al. (2011). An Exact Algorithm for F-Measure Maximization. NeurIPS.](https://papers.nips.cc/paper/4389-an-exact-algorithm-for-f-measure-maximization) (abstract)**
+- Exact Bayes-optimal F-measure prediction needs statistics of the joint distribution, not per-label marginals. Not cited in the plan.
+
+### Training for the metric
+
+**[Smith & Eisner (2006). Minimum Risk Annealing for Training Log-Linear Models. COLING/ACL.](https://aclanthology.org/P06-2101/) (abstract)**
+- Expected-loss training with a distribution annealed toward the 1-best. The sharpening links the risk loss to the "sharpen toward the mode" cell of plan §7.2.
+
+**[Shen et al. (2016). Minimum Risk Training for Neural Machine Translation. ACL.](https://aclanthology.org/P16-1159/) (abstract)**
+- Expected BLEU over sampled translations. Our risk loss sums exactly over all spans instead of sampling.
+
+**[Jansche (2005). Maximum Expected F-Measure Training of Logistic Regression Models. HLT/EMNLP.](https://aclanthology.org/H05-1087/) (abstract)**
+- Early expected-F training in NLP. Not cited in the plan.
+
+**[Gimpel & Smith (2010). Softmax-Margin CRFs. NAACL.](https://aclanthology.org/N10-1112/) (abstract)**
+- Adds the task cost to the softmax in cross-entropy training; bounds the risk. A possible extra loss (cost 1 − F1); not in the plan.
+
+### Metric-aware training of SQuAD readers
+
+**[Xiong, Zhong & Socher (2018). DCN+: Mixed Objective and Deep Residual Coattention for Question Answering. ICLR.](https://arxiv.org/abs/1711.00106) (abstract)**
+- Cross-entropy + self-critical policy gradient with a word-overlap reward, "to solve the misalignment between evaluation metric and optimization objective".
+- **How ours differs:** an exact expected-F1 sum over all spans of a joint head, no sampling.
+
+**[Hu et al. (2018). Reinforced Mnemonic Reader for Machine Reading Comprehension. IJCAI.](https://www.ijcai.org/proceedings/2018/570) (abstract)**
+- "Dynamic-critical" reinforcement learning on top of supervised training; large gains on both Adversarial SQuAD sets (over 6 points EM and F1). Suggests metric-aware training may help robustness.
+
+### MBR decoding and calibration
+
+**[Eikema & Aziz (2020). Is MAP Decoding All You Need? COLING.](https://aclanthology.org/2020.coling-main.398) (abstract)**
+- In NMT the mode holds so little mass that it is close to arbitrary; MBR uses the whole distribution. Our span distributions are much sharper (MAP and MBR differ on 1.6% of base-baseline answers). Not cited in the plan.
+
+**[Freitag et al. (2022). High Quality Rather than High Model Probability: MBR Decoding with Neural Metrics. TACL.](https://aclanthology.org/2022.tacl-1.47) (abstract)**
+- MBR with the target metric as utility beats beam search. Not cited in the plan.
+
+**[Castel, Ram, Efrat & Levy (2022). How Optimal is Greedy Decoding for Extractive Question Answering? AKBC.](https://arxiv.org/abs/2108.05857) (abstract)**
+- Greedy vs. exact most-probable-span decoding for generative readers; they converge with a little fine-tuning. MAP only, no MBR: the closest extractive-QA decoding study, and it leaves the MBR claim open.
+
+**[Desai & Durrett (2020). Calibration of Pre-trained Transformers. EMNLP.](https://arxiv.org/abs/2003.07892) (abstract)** and **[Jiang et al. (2021). How Can We Know When Language Models Know? TACL.](https://aclanthology.org/2021.tacl-1.57) (abstract)**
+- Fine-tuned encoders are fairly calibrated in domain and temperature scaling helps; generative QA models are poorly calibrated. Supports reporting ECE in E1. Not cited in the plan.
+
+**[Müller, Kornblith & Hinton (2019). When Does Label Smoothing Help? NeurIPS.](https://papers.nips.cc/paper/8717-when-does-label-smoothing-help) (abstract)**
+- Label smoothing improves calibration and beam search. F1-weighted targets are a structured label smoothing, so they may help calibration while the risk loss hurts it. Not cited in the plan.
+

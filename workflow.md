@@ -2,7 +2,7 @@
 
 How each stage and experiment is carried out: where code goes, how work is split and reviewed, and when to open a pull request.
 
-- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.2). **How to build it:** [implementation_details.md](implementation_details.md). **When:** [timeline.md](timeline.md). **How we work:** this file.
+- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.3). **How to build it:** [implementation_details.md](implementation_details.md). **When:** [timeline.md](timeline.md). **How we work:** this file.
 - Humans and AI assistants follow the same rules. Assistants read this file with AGENTS.md before starting a task.
 - Change this file through a PR, like any other shared rule.
 
@@ -59,7 +59,7 @@ Entry points run from the repo root as `python -m squadqa.<module>`, with the co
 - **Each run writes** `results/<run_id>/` with the resolved config (after overrides), the git commit, the seed, `metrics.json`, and validation predictions. Final scoring adds the dev and robustness predictions (§6).
 - **Commit everything in a run's folder except `candidates_*.json`** (about 4 MB each, decided 2026-10-04): config, `run.json`, metrics, calibration and predictions, including `epoch<k>/` folders. Candidates stay on the cluster; regenerate them from the run's checkpoint with `python -m squadqa.predict --run-id <run_id>` when needed (#25 uses the final row-0 runs).
 - **Checkpoints** stay in your own `$SQUADQA_SCRATCH/runs/<run_id>/` on the cluster and are never committed.
-- **Need someone else's checkpoint?** Retrain it from the frozen config on `main` in your own clone. A large reader epoch takes about 15 minutes (plan §12.1), which is simpler and safer than copying files between accounts.
+- **Need someone else's checkpoint?** Retrain it from the frozen config on `main` in your own clone. A large reader epoch takes about 15 minutes (plan §15.1), which is simpler and safer than copying files between accounts.
 - **`data/external/`** is rebuilt in each clone with `python -m squadqa.download_external`, locally and on the cluster (in a CPU job). It is never committed.
 
 ---
@@ -75,7 +75,7 @@ Entry points run from the repo root as `python -m squadqa.<module>`, with the co
 
 ### 3.2 Stage kickoff and milestone check
 
-- **Kickoff (start of each stage, about 15 minutes):** split the stage's work into issues, assign owners as in the proposal's breakdown (plan §10), and note who depends on whom.
+- **Kickoff (start of each stage, about 15 minutes):** split the stage's work into issues, assign owners as in the proposal's breakdown (plan §13), and note who depends on whom.
 - **Milestone check (Thursday, about 15 minutes):** each owner reports done, late, or blocked. Anything late uses the Sunday buffer. Anything still late on Sunday goes to the cut list (timeline.md §5), decided together.
 - **Work no topic owner covers** (pipelines, cluster tooling, run tracking, paper assembly) is assigned at the week-8 setup, also as issues.
 
@@ -145,7 +145,7 @@ Entry points run from the repo root as `python -m squadqa.<module>`, with the co
 4. **Smoke run** on the cluster if the training code is new (§4.3).
 5. **Runs:** base, 1 seed, scored on the validation split. Submit with `soc.sh submit`.
 6. **Fetch** with `soc.sh fetch <run_id>` and commit `results/<run_id>/` on the same branch.
-7. **PR** with the code, config and results. Summarize the outcome in the PR description: what won, by how much, against the seed spread (plan §12.3).
+7. **PR** with the code, config and results. Summarize the outcome in the PR description: what won, by how much, against the seed spread (plan §15.3).
 
 ### 5.2 Final run (a ladder row)
 
@@ -169,7 +169,7 @@ Once it merges, the row's final runs start (§5.2), and later stages build on th
 
 ## 6. Stage by stage
 
-Owners follow the proposal's breakdown (plan §10); names are assigned at each kickoff. Each stage ends with its freeze PR merged by its Thursday.
+Owners follow the proposal's breakdown (plan §13); names are assigned at each kickoff. Each stage ends with its freeze PR merged by its Thursday.
 
 | Stage (milestone) | Work and owners | Main PRs | Done when |
 |---|---|---|---|
