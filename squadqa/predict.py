@@ -89,13 +89,14 @@ def decode_questions(feats: Features, spans: list[SpanScores], cfg: dict,
     return preds, cands_out
 
 
-def write_outputs(run_dir: Path, split: str, preds: dict[str, dict[str, str]], candidates: dict[str, list],
+def write_outputs(run_dir: Path, split: str, preds: dict[str, dict[str, str]], candidates: dict[str, list] | None,
                   calibration: dict | None = None) -> None:
     for rule, answers in preds.items():
         if any(not a.strip() for a in answers.values()):
             raise RuntimeError(f"an empty {rule} answer; the scorer would read it as 'no answer'")
         write_json(run_dir / f"predictions_{split}_{rule}.json", answers)
-    write_json(run_dir / f"candidates_{split}.json", candidates)
+    if candidates is not None:
+        write_json(run_dir / f"candidates_{split}.json", candidates)
     if calibration is not None:
         write_json(run_dir / "calibration.json", calibration)
 
@@ -114,7 +115,7 @@ def reader_score_fn(model, device: str):
 
 
 def predict_split(model, tok, cfg: dict, run_dir: Path, device: str, split: str, questions, dataset,
-                  temperature: float | None = None, batch_size: int = 64) -> dict:
+                  temperature: float | None = None, batch_size: int = 64, save_candidates: bool = True) -> dict:
     """Predict, decode and score one split; fit the temperature when temperature is None
     (validation only). Writes the outputs and returns {split: {rule: scores}, ...}."""
     feats = featurize(questions, tok, cfg, training=False)
@@ -123,7 +124,7 @@ def predict_split(model, tok, cfg: dict, run_dir: Path, device: str, split: str,
     cal = calibrate(feats, spans) if temperature is None else None
     t = cal["temperature"] if cal else temperature
     preds, cands = decode_questions(feats, spans, cfg, t)
-    write_outputs(run_dir, split, preds, cands, cal)
+    write_outputs(run_dir, split, preds, cands if save_candidates else None, cal)
     out = {split: {rule: E.metrics(split, dataset, p) for rule, p in preds.items()}}
     if cal:
         out["calibration"] = cal
