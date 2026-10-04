@@ -11,6 +11,8 @@ dependencies = [
     "numpy",               # imported by qa/evaluate-v2.0.py
     "pyyaml",
     "python-dotenv",
+    "peft",                # LoRA for the shared verifier (spec §5.4)
+    "scipy",               # statistics for the paper's tables (timeline 5.3)
 ]
 # Exact versions are pinned by uv.lock, not here.
 

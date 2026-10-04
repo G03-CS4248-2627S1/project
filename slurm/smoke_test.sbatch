@@ -16,6 +16,7 @@ export RUN_ID="$(date +%F)-smoke-j$SLURM_JOB_ID"
 nvidia-smi
 python - <<'EOF'
 import json, os, torch
+import peft, scipy, transformers   # fails here if the environment lacks a locked dependency
 
 assert torch.cuda.is_available(), "PyTorch cannot see a GPU"
 name = torch.cuda.get_device_name()
@@ -26,11 +27,13 @@ assert cap >= (8, 0), f"{name} has no native bf16; request an A100 or H100"
 x = torch.randn(1024, 1024, device="cuda", dtype=torch.bfloat16)
 mean = (x @ x).float().abs().mean().item()
 print("bf16 matmul ok:", mean)
+print(f"transformers {transformers.__version__}, peft {peft.__version__}, scipy {scipy.__version__}")
 
 run_dir = os.path.join("results", os.environ["RUN_ID"])
 os.makedirs(run_dir)
 with open(os.path.join(run_dir, "smoke.json"), "w") as f:
     json.dump({"torch": torch.__version__, "cuda": torch.version.cuda, "gpu": name,
-               "capability": list(cap), "bf16_matmul_mean": mean}, f, indent=2)
+               "capability": list(cap), "bf16_matmul_mean": mean, "transformers": transformers.__version__,
+               "peft": peft.__version__, "scipy": scipy.__version__}, f, indent=2)
 print("wrote", run_dir)
 EOF
