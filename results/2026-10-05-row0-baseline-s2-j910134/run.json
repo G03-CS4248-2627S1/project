@@ -1,0 +1,11 @@
+{
+  "run_id": "2026-10-05-row0-baseline-s2-j910134",
+  "experiment": "row0-baseline",
+  "config_file": "configs/experiments/row0-baseline.yaml",
+  "seed": 2,
+  "git_commit": "3b93d9ec4d4099ede457261a1e9c62df1f51bc10",
+  "git_dirty": false,
+  "slurm_job_id": "910134",
+  "host": "xgpg2",
+  "started": "2026-10-05T01:15:21"
+}
