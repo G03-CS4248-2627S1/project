@@ -29,7 +29,7 @@ train:                                 # reader fine-tuning: the plan's sandbox 
   checkpoint_every: 500                # optimizer steps
 verifier:
   variant: shared_lora                 # shared_lora = frozen reader + LoRA | separate = ModernBERT-large (E2 compares both)
-  separate_model: answerdotai/ModernBERT-large   # pin in squadqa/download_model.py before first use
+  separate_model: answerdotai/ModernBERT-large   # pinned in squadqa/download_model.py; base for development
   type: in_place                       # in_place | levitated | levitated_shared (both P3)
   shared_option: B                     # levitated_shared only (P3): A = fully shared multi-task, B = frozen reader + marker-only LoRA
   lora: {rank: 16, alpha: 32, targets: [query_proj, key_proj, value_proj]}   # shared_lora and option B; check module names in the installed HF version

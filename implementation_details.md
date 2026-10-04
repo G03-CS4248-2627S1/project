@@ -53,7 +53,7 @@ train:                                 # reader fine-tuning: the plan's sandbox 
   checkpoint_every: 500                # optimizer steps
 verifier:
   variant: shared_lora                 # shared_lora = frozen reader + LoRA | separate = ModernBERT-large (E2 compares both)
-  separate_model: answerdotai/ModernBERT-large   # pin in squadqa/download_model.py before first use
+  separate_model: answerdotai/ModernBERT-large   # pinned in squadqa/download_model.py; base for development
   type: in_place                       # in_place | levitated | levitated_shared (both P3)
   shared_option: B                     # levitated_shared only (P3): A = fully shared multi-task, B = frozen reader + marker-only LoRA
   lora: {rank: 16, alpha: 32, targets: [query_proj, key_proj, value_proj]}   # shared_lora and option B; check module names in the installed HF version
@@ -255,9 +255,8 @@ Not the default: the default candidates are sampled from the final reader (§5.1
 - **`shared_lora`:** load the frozen final reader and add PEFT LoRA (`verifier.lora`) to its encoder.
   - Reader passes run with the adapter disabled (`with model.disable_adapter():`); verifier passes run with it enabled.
   - Train only the LoRA weights, the two marker embeddings and the verifier head. Keep the existing embedding rows frozen, so the reader is unchanged (test V4).
-  - `peft` is not yet in `pyproject.toml`. Add it with `uv lock` and pass the cluster smoke test first (README, "Dependencies").
 - **`separate`:** `verifier.separate_model` (ModernBERT-large), fully fine-tuned with its own tokenizer.
-  - Before first use, add it to `MODELS` in `squadqa/download_model.py` with a pinned revision and SHA-256, and load it with an explicit dtype (§9).
+  - Pinned in `MODELS` in `squadqa/download_model.py` (base and large); load it with an explicit dtype (§9).
   - Smoke-test it like any new training script (§9).
 
 ### 5.5 Levitated markers (P3)
@@ -370,7 +369,7 @@ out = flex_attention(q_c, k_c, v, score_mod=score_mod,
 - **Pinned and offline.**
   - Load with `revision=MODELS[name]["revision"]` from `squadqa/download_model.py`.
   - Set `HF_HUB_OFFLINE=1` in jobs, so a missing file raises an error instead of downloading something unpinned.
-  - Only `microsoft/deberta-v3-large` is pinned so far. Pin `microsoft/deberta-v3-base` and ModernBERT (base for development, large for results) the same way before using them.
+  - Pinned (2026-10-04): `microsoft/deberta-v3-large`, `microsoft/deberta-v3-base` (development), `answerdotai/ModernBERT-base` (development) and `answerdotai/ModernBERT-large` (results). Pin any other model the same way before using it.
 - **Smoke-test every new training script** before a full run.
   - Train a few dozen steps with a checkpoint, then run again with the same run id.
   - Check that parameters and optimizer state are fp32, the loss falls, the run resumes at the saved step, and the official scorer accepts the predictions.

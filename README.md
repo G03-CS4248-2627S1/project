@@ -51,7 +51,7 @@ Run these in a login session on the cluster.
    ```
    srun --partition=normal --time=00:30:00 --cpus-per-task=4 --mem=8G ~/.local/bin/uv sync
    ```
-5. **Download the pinned model and the external datasets,** also in a CPU job. Jobs load models offline, so they fail without this:
+5. **Download the pinned models and the external datasets,** also in a CPU job. Jobs load models offline, so they fail without this. The models (DeBERTa-v3 base and large, ModernBERT base and large) take about 5 GB in `$HF_HOME`; name some to fetch only those, and on a laptop add `--tokenizer-only` for the CPU tests:
    ```
    srun --partition=normal --time=00:30:00 --cpus-per-task=4 --mem=8G .venv/bin/python -m squadqa.download_model
    srun --partition=normal --time=00:30:00 --cpus-per-task=4 --mem=8G .venv/bin/python -m squadqa.download_external
