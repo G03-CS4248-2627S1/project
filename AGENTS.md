@@ -120,6 +120,15 @@ Both files differ from the official release (the originals are in commit `8a3a52
 - They are pretty-printed with 2-space indentation. The originals were a single line each.
 - In dev, answers repeated with the same `text` **and** `answer_start` were removed, keeping the first copy. `answers[0]` and each question's set of distinct answers are unchanged, so EM/F1 are identical. The one thing lost is how many annotators chose each answer, so a majority-vote answer can no longer be recovered.
 - As a result, dev now averages **1.72 reference answers per question**, not the official 3.29 (plan §2.1 rounds it to 3.3). Statistics based on the first answer are unaffected.
+- **Validation scores are not comparable with dev scores.** Validation has one reference per question, so the same model scores much higher on dev. Measured on row 0 (3 seeds, deberta-v3-large, MAP; job 911434, an approved early exception to workflow.md §6.1, 2026-10-05):
+
+  | Scored on | EM | F1 |
+  |---|---|---|
+  | validation | 76.89 | 89.62 |
+  | dev, first reference only | 74.81 | 87.77 |
+  | dev, all references | 90.03 | 95.30 |
+
+  The extra references add about 15 EM and 7.5 F1; dev questions scored with one reference are about 2 points harder than validation. Compare systems with each other on validation, never with published dev numbers.
 
 Keep these JSON files ASCII-only by writing them with `json.dump`'s default `ensure_ascii=True`. The scorer opens files without an encoding, which on Windows means cp1252.
 
