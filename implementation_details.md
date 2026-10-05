@@ -43,6 +43,7 @@ f1_target: normalized                  # normalized = content-word F1, boundary 
 f1_target_weight: 0.0                  # α, the F1:EM loss ratio (§4.3); 0 = one-hot target (rows 0–1), tuned in E1
 f1_target_temperature: 0.1             # τ: how evenly the F1 credit is spread
 f1_target_floor: 0.5                   # φ: spans with F1 < φ get no F1 credit; 0 = every overlapping span
+risk_weight: 0.0                       # β: weight of the expected-F1 (risk) loss added to the target loss (§4.3); 0 = none
 calibration: temperature               # one T, fit on validation split
 extra_train_data: []                   # row 5: [adversarialqa]; augmentation (P2) adds augmented
 train:                                 # reader fine-tuning: the plan's sandbox recipe (plan §15.1); lr and epochs tuned in row 0 (plan §15.3)
@@ -195,7 +196,18 @@ t(y) = (1 − α) · t_EM(y) + α · t_F1(y)              # α, τ, φ tuned on 
 t_EM: equal mass on y* and its boundary variants (ℓ_EM = 1 − EM = 0)
 t_F1(y) ∝ exp(−ℓ_F1(y, y*) / τ) where F1 > 0 and F1 ≥ φ, else 0     # ℓ_F1 = 1 − F1
 ℒ_soft = − Σ_y t(y) · log p(y)                    # α = 0: ℒ_CE = − log p(y*)
+ℒ_risk = Σ_y p(y) · ℓ_F1(y, y*)                    # every valid span; no floor, no EM part
+ℒ = ℒ_soft + β · ℒ_risk                            # β = risk_weight (plan §6.2)
 ```
+- **One objective for every training variant** (plan §6.2):
+
+  | | β = 0 | β > 0 |
+  |---|---|---|
+  | α = 0 | one-hot (rows 0–1) | one-hot + risk |
+  | α > 0 | F1-weighted targets | F1-weighted targets + risk |
+
+- **The risk term uses F1 only.** EM is already in ℒ_soft: its (1 − α) part is −log p(gold), the log form of the expected EM loss 1 − p(gold). An EM term in ℒ_risk would count EM twice, in the linear form whose gradient vanishes when p(gold) is small.
+- **The risk term needs no floor.** It weights spans by p, not by how many overlap the gold; spans with F1 = 0 count as full loss, which is right there.
 - `α` is the proposal's F1:EM loss ratio: the exact-match (one-hot) and F1-weighted parts are mixed `(1 − α) : α` (`f1_target_weight`).
 - `τ` (`f1_target_temperature`) sets how evenly the F1 credit is spread; `φ` (`f1_target_floor`) sets which spans get any. φ = 0 credits every overlapping span.
 - **Why the floor:** the number of overlapping spans grows with answer and span length, and the many barely-overlapping ones outweigh the few good ones. Example: a one-word answer has 465 overlapping spans of at most 30 words. At τ = 0.2 and φ = 0, 78% of t_F1 goes to spans with F1 < 0.5, and a span drawn from t_F1 has expected F1 0.29. At τ = 0.1 it is 7% and 0.91.
@@ -212,12 +224,14 @@ Cross-entropy, NaN-safe (masked entries have log p = −inf, and 0 · −inf = N
 ```python
 logp = scores.flatten(1).log_softmax(-1)
 loss = -torch.where(target > 0, target * logp, torch.zeros_like(logp)).sum(-1).mean()
+# risk term: masked spans have p = 0, but give them a finite loss so 0 · ℓ stays 0
+risk = (logp.exp() * torch.where(valid, f1_loss, torch.zeros_like(f1_loss))).sum(-1).mean()
 ```
 
 **Compound objective** (`span_head: compound`, ladder row 1; Fajcik et al. 2021): add the standard independent loss on the head's start and end scores.
 - Start logits are `u(h_s)` over the passage words of all of a question's windows (one softmax, as in §3.4); end logits are `v(h_e)`.
 - Cross-entropy against i* and j*, weighted by `aux_independent_weight` (ω in the plan): ℒ = ℒ_joint + ω · ℒ_ind.
-- This term always uses one-hot targets. The F1-weighted target (row 2) applies to the joint term only.
+- This term always uses one-hot targets. The F1-weighted target (row 2) and the risk term apply to the joint term only.
 - Decoding uses the joint scores s(i, j).
 
 ### 4.4 Decoding
