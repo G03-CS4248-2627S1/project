@@ -2,7 +2,7 @@
 
 Implementation spec for coding agents and team members.
 
-- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.3). **How:** this file. **When:** [timeline.md](timeline.md). **How we work:** [workflow.md](workflow.md).
+- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.4). **How:** this file. **When:** [timeline.md](timeline.md). **How we work:** [workflow.md](workflow.md).
 - Week labels such as W2 or W5+ are plan weeks: W1–W7 are course weeks 7–13.
 - If this file and the plan disagree, stop and ask a human.
 
@@ -40,6 +40,9 @@ decode_rules: [map, mbr]               # always report both
 mbr_em_weight: 1.0                     # γ, the F1:EM decoding ratio: MBR utility F1 + γ·EM; 0 = expected F1
 mbr_utility: normalized                # normalized = content-word F1/EM, boundary variants grouped | positional (E1 row; §4.4)
 f1_target: normalized                  # normalized = content-word F1, boundary variants exact | positional (ablation; §4.3)
+f1_target_weight: 0.0                  # α, the F1:EM loss ratio (§4.3); 0 = one-hot target (rows 0–1), tuned in E1
+f1_target_temperature: 0.1             # τ: how evenly the F1 credit is spread
+f1_target_floor: 0.5                   # φ: spans with F1 < φ get no F1 credit; 0 = every overlapping span
 calibration: temperature               # one T, fit on validation split
 extra_train_data: []                   # row 5: [adversarialqa]; augmentation (P2) adds augmented
 train:                                 # reader fine-tuning: the plan's sandbox recipe (plan §15.1); lr and epochs tuned in row 0 (plan §15.3)
@@ -188,12 +191,17 @@ Word-level positional F1 between a span y = (i, j) and the gold span y* = (i*, j
 ```
 overlap = max(0, min(j, j*) − max(i, i*) + 1)
 P = overlap / (j − i + 1);  R = overlap / (j* − i* + 1);  F1 = 2PR / (P + R)   (0 if overlap = 0)
-t(y) = (1 − α) · t_EM(y) + α · t_F1(y)              # α, τ tuned on validation
+t(y) = (1 − α) · t_EM(y) + α · t_F1(y)              # α, τ, φ tuned on validation
 t_EM: equal mass on y* and its boundary variants (ℓ_EM = 1 − EM = 0)
-t_F1(y) ∝ exp(−ℓ_F1(y, y*) / τ) where ℓ_F1 = 1 − F1 < 1 (spans overlapping the gold), else 0
+t_F1(y) ∝ exp(−ℓ_F1(y, y*) / τ) where F1 > 0 and F1 ≥ φ, else 0     # ℓ_F1 = 1 − F1
 ℒ_soft = − Σ_y t(y) · log p(y)                    # α = 0: ℒ_CE = − log p(y*)
 ```
-- `α` is the proposal's F1:EM loss ratio: the exact-match (one-hot) and F1-weighted parts are mixed `(1 − α) : α`.
+- `α` is the proposal's F1:EM loss ratio: the exact-match (one-hot) and F1-weighted parts are mixed `(1 − α) : α` (`f1_target_weight`).
+- `τ` (`f1_target_temperature`) sets how evenly the F1 credit is spread; `φ` (`f1_target_floor`) sets which spans get any. φ = 0 credits every overlapping span.
+- **Why the floor:** the number of overlapping spans grows with answer and span length, and the many barely-overlapping ones outweigh the few good ones. Example: a one-word answer has 465 overlapping spans of at most 30 words. At τ = 0.2 and φ = 0, 78% of t_F1 goes to spans with F1 < 0.5, and a span drawn from t_F1 has expected F1 0.29. At τ = 0.1 it is 7% and 0.91.
+  - The floor is the RAML target with the reward cut off below φ, so the forward/reverse KL relation of plan §6.2 still holds, with ℓ_F1 replaced by the truncated loss (∞ below φ).
+  - Boundary smoothing (Zhu & Li, 2022) avoids the same problem by crediting only spans near the gold boundaries.
+  - Log the expected F1 of t_F1 during training as a check.
 **Note: this F1 differs from the official scorer's.** The scorer normalizes both strings first: lowercase, delete ASCII punctuation, remove *a*/*an*/*the*, collapse whitespace (`normalize_answer` in `qa/evaluate-v2.0.py`). Here, punctuation words and articles count, so a leading "the" or a trailing "." costs about 0.2 F1 (gold "Eiffel Tower" vs. "the Eiffel Tower": 0.8 here, 1.0 official). This is part of the F1-weighted-target work (timeline 2.2), selected by `f1_target`, with an ablation of `positional` vs. `normalized` on base:
 - **`normalized`:** give each word a 0/1 flag (0 for punctuation words and articles; these are *content words* when 1) and count only content words in the overlap and lengths, with prefix sums, so it stays vectorized on the GPU. A span with no content words ("the", ".") matches only the identical span: the scorer would call any two such spans equal, but they sit at different positions (rule 4), and the scorer gives such a prediction 0 against any gold answer with content words (2 of 87,334 aligned train answers have none). It is still positional: only words at the same positions overlap.
 - **Boundary variants are exact matches:** a span that covers exactly the annotated answer's content words, differing only by leading or trailing articles or punctuation ("the Eiffel Tower" vs. "Eiffel Tower"), gets the same credit as the annotated span. The one-hot part of the target becomes uniform over these variants. They are found from the annotated span, so no string search is involved.
@@ -236,7 +244,7 @@ loss = -torch.where(target > 0, target * logp, torch.zeros_like(logp)).sum(-1).m
 ### 5.1 Candidates and targets
 - **Training:** spans sampled from the final reader's span distribution on its own training questions, at a temperature above 1 tuned on the validation split (plan §4.3). For the E2 ablation, use the cross-fitted readers' top-k on the held-out fold (§5.2) instead. In both cases add the gold span if missing, plus boundary variants (±1 word at either end, valid only), plus siblings (§3.5) if `sibling_negatives: true`. Deduplicate.
 - **Inference:** the reader's top-k.
-- **Loss:** listwise. Softmax over a question's candidate scores; F1-soft target over the candidates (same α, τ form and the same `f1_target` as §4.3); cross-entropy.
+- **Loss:** listwise. Softmax over a question's candidate scores; F1-soft target over the candidates (same α, τ, φ form and the same `f1_target` as §4.3); cross-entropy.
 - **Unanswerable negatives** (`unanswerable_negatives: true`, row 5): append a null candidate with a fixed score of 0 to every training question's list. Answerable questions give it target 0; the unanswerable questions of §3.6 put all target mass on it. Inference never adds the null candidate.
 - Track **top-k recall** (fraction of questions whose gold span is among the candidates). It caps verifier accuracy.
 
