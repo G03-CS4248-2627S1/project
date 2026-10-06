@@ -136,13 +136,31 @@ def predict_validation(model, tok, cfg: dict, run_dir: Path, device: str) -> dic
                          E.load_eval_set("validation"))
 
 
-def main(argv: list[str] | None = None) -> None:
-    os.environ.setdefault("HF_HUB_OFFLINE", "1")
-    import torch
+def eval_questions(name: str):
+    """The questions of an evaluation set. Load it with E.load_eval_set first, which refuses the
+    final-scoring sets without final=True."""
+    return load_split("validation") if name == "validation" else load_squad(E.FINAL_SETS[name])
+
+
+def load_reader(run_id: str, device: str):
+    """A trained run's resolved config, tokenizer and reader with its checkpoint loaded, and the
+    checkpoint's step."""
     import yaml
 
     from squadqa.heads import Reader
     from squadqa.train_reader import CHECKPOINT, load_checkpoint, load_encoder
+
+    with open(RESULTS / run_id / "config.yaml", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+    tok = load_tokenizer(cfg["model"])
+    model = Reader(load_encoder(cfg["model"]), cfg).to(device)
+    step = load_checkpoint(Path(env("SQUADQA_SCRATCH")) / "runs" / run_id / CHECKPOINT, model)
+    return cfg, tok, model, step
+
+
+def main(argv: list[str] | None = None) -> None:
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    import torch
 
     parser = argparse.ArgumentParser(description="Predict with a trained reader's checkpoint.")
     parser.add_argument("--run-id", required=True)
@@ -152,19 +170,15 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     run_dir = RESULTS / args.run_id
-    with open(run_dir / "config.yaml", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
     dataset = E.load_eval_set(args.eval_set, args.final)            # raises for dev etc. without --final
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    tok = load_tokenizer(cfg["model"])
-    model = Reader(load_encoder(cfg["model"]), cfg).to(device)
-    step = load_checkpoint(Path(env("SQUADQA_SCRATCH")) / "runs" / args.run_id / CHECKPOINT, model)
+    cfg, tok, model, step = load_reader(args.run_id, device)
     if args.eval_set == "validation":
-        out = predict_split(model, tok, cfg, run_dir, device, "validation", load_split("validation"), dataset,
+        out = predict_split(model, tok, cfg, run_dir, device, "validation", eval_questions("validation"), dataset,
                             batch_size=args.batch_size)
     else:
         temperature = json.loads((run_dir / "calibration.json").read_text(encoding="utf-8"))["temperature"]
-        out = predict_split(model, tok, cfg, run_dir, device, args.eval_set, load_squad(E.FINAL_SETS[args.eval_set]),
+        out = predict_split(model, tok, cfg, run_dir, device, args.eval_set, eval_questions(args.eval_set),
                             dataset, temperature, args.batch_size)
     path = run_dir / "metrics.json"
     metrics = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
