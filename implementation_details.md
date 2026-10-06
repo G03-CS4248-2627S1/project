@@ -245,10 +245,11 @@ risk = (logp.exp() * torch.where(valid, f1_loss, torch.zeros_like(f1_loss))).sum
 - **Calibration:** fit one temperature T on the validation split (minimize the NLL of the gold span). Questions whose answer is not a valid span (not word-aligned, or over 30 words) are left out of the fit and counted in `calibration.json`.
 
 ### 4.5 Diagnostics
-- **Cross-span mass** (plan E3; also the W2 early check on the joint head):
-  1. Take the two highest-probability non-overlapping spans a = (i1, j1) and b = (i2, j2), with i1 < i2.
-  2. The cross span is c = (i1, j2), if valid.
-  3. Report p(c) / (p(a) + p(b) + p(c)), bucketed by top-1 probability (< 0.5, 0.5–0.9, > 0.9), for the standard and joint heads.
+- **Cross-span mass** (plan E3; also the W2 early check on the joint head; `squadqa/diagnostics.py`):
+  1. Take the most probable span and the most probable span that does not overlap it and has a content word (§4.3). By position they are a = (i1, j1) and b = (i2, j2), with i1 < i2. A span of only punctuation or articles is no answer, and joining one to a would give a boundary variant of a, not a cross span.
+  2. The cross span is c = (i1, j2), if valid; without one the ratio below is 0.
+  3. Report p(c) / (p(a) + p(b) + p(c)), with p calibrated (the run's temperature), bucketed by top-1 probability (< 0.5, 0.5–0.9, > 0.9), for the standard and joint heads.
+  4. Also count how often each decision rule answers with the cross span (under `mbr_utility: normalized`, a boundary variant of it counts), with the official scores of those answers. This shows whether cross spans cause errors (plan §5: expected-F1 decoding favours them).
 - **Equivalence test:** with W = 0 and b = 0, the joint head's argmax must equal the argmax over valid (i, j) of `u·h_i + v·h_j`.
 
 ---
