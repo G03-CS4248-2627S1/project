@@ -3,6 +3,7 @@
 #   bash .claude/skills/soc-cluster/soc.sh submit slurm/diagnostics.sbatch --run-id <run_id> [<run_id> ...]
 # Each run needs results/<run_id>/ (config.yaml, calibration.json) in the clone and its checkpoint in
 # $SQUADQA_SCRATCH/runs/<run_id>/. Writes results/<run_id>/cross_span_validation{,_questions}.json.
+# Three large runs took 2 minutes on an h100-47 (job 915038): about 35 s per run after the first.
 # The log goes to logs/<job name>-<job id>.out. Partitions: gpu (up to 3 hours) or gpu-long (up to 3 days).
 #SBATCH --job-name=diagnostics
 #SBATCH --partition=gpu
