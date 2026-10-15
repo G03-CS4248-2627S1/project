@@ -129,6 +129,7 @@ These wait on a result, but are short and off the critical path:
 **Goal:** settle the reader design. This is the main blocker (§3.2).
 
 - **2.1 Compound objective** (plan §5; spec §4.3). Joint head plus the auxiliary independent loss, against the baseline on base. Ablate W init, the length bonus, and joint only.
+  - 1b runs (`slurm/joint_head_tests.sh`): Fajcik et al.'s four objectives (independent, conditional, joint, compound), and for the bilinear ones the length bias and position encodings before the bilinear term, every run with the no-answer option (spec §4.1). The reference is row 0 on base, without the option.
 - **2.2 F1-weighted targets** (plan §6), against the baseline on base. Sweep α (the F1:EM loss ratio) and τ, and compare positional with normalized F1 in the targets (spec §4.3), sized by the gap measured in 1.6.
 - **2.3 Combine** the two only if both beat the baseline on the validation split. Otherwise keep the one that does, and report the other as an ablation.
 - **2.4 Rerun E3 on the new head.** The before-and-after comparison is the E3 result.

@@ -77,9 +77,9 @@ def test_span_scores_are_start_plus_end_on_valid_spans():
                 assert s[w, i, j] == pytest.approx(float(expected))
 
 
-def test_only_the_standard_head_is_built():
-    with pytest.raises(NotImplementedError, match="1b"):
-        H.Reader(tiny_encoder(), load_config())                     # base.yaml says compound
+def test_base_config_builds_the_compound_head():
+    model = H.Reader(tiny_encoder(), load_config())                 # base.yaml says compound (ladder row 1)
+    assert model.kind == "compound" and isinstance(model.head, H.JointSpanHead)
 
 
 # Training: fp32, loss falls, checkpoint and resume.

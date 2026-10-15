@@ -1,0 +1,5 @@
+# Milestone 1b: Fajcik et al.'s conditional objective (JC), p(start) p(end | start), with the
+# no-answer option (spec §4.3). Development runs on base (workflow.md §3.4).
+model: microsoft/deberta-v3-base
+span_head: conditional
+no_answer: true

@@ -1,0 +1,7 @@
+# Milestone 1b: Fajcik et al.'s joint objective (J), one softmax over all spans, without the
+# auxiliary independent loss (the plan's P2 ablation), with the no-answer option (spec §4.1, §4.3).
+# Head options by --set: length_bias (on here, as in base.yaml) and bilinear_pos_enc.
+# Development runs on base (workflow.md §3.4).
+model: microsoft/deberta-v3-base
+span_head: joint
+no_answer: true

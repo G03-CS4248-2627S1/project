@@ -37,7 +37,7 @@ from squadqa import evaluate as E
 from squadqa import predict as P
 from squadqa.config import RESULTS, git_state, write_json
 from squadqa.data import Features, featurize
-from squadqa.decode import SpanScores, answer_text, content_flags, decode, log_softmax, span_f1_em, top_k
+from squadqa.decode import SpanScores, answer_text, content_flags, decode, span_f1_em, span_logp, top_k
 
 BUCKETS = ["<0.5", "0.5-0.9", ">0.9"]           # by top-1 probability (spec §4.5)
 
@@ -59,8 +59,9 @@ class CrossSpan:
 
 
 def cross_span(spans: SpanScores, flags: np.ndarray, temperature: float = 1.0) -> CrossSpan:
-    """The cross span of one question's span distribution. flags: content_flags of its words."""
-    logp = log_softmax(spans.scores, temperature)
+    """The cross span of one question's span distribution. flags: content_flags of its words.
+    With a no-answer option, p is still the question's one softmax, null included."""
+    logp = span_logp(spans, temperature)[0]
     p = np.exp(logp)
     top = int(np.argmax(logp))
     s, e = int(spans.starts[top]), int(spans.ends[top])

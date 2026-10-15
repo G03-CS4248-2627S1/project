@@ -1,0 +1,6 @@
+# Milestone 1b control: the standard (independent, I) objective of row 0, with the no-answer option
+# the 1b tests all share, so it differs from the joint-head runs only in the objective (spec §4.3).
+# Development runs on base (workflow.md §3.4); slurm/joint_head_tests.sh submits them.
+model: microsoft/deberta-v3-base
+span_head: standard
+no_answer: true

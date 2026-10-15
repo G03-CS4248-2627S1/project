@@ -16,6 +16,11 @@ so boundary variants ("the Eiffel Tower", "Eiffel Tower") are the same answer, a
 text elsewhere in the passage is a different one (spec rule 4). A span with no content word
 ("the", ".") matches only itself. span_f1_em is the shared function the F1-weighted training
 targets reuse.
+
+No-answer option (no_answer: true): the null joins the question's softmax, so it takes part in
+calibration and lowers every span's probability, but it is never an answer (spec rule 5). MAP
+and MBR choose among spans as before: any answer scores 0 against "no answer", so the null adds
+the same 0 to every span's expected utility and leaves the MBR choice unchanged.
 """
 
 from dataclasses import dataclass
@@ -75,6 +80,12 @@ class SpanScores:
     starts: np.ndarray          # (m,) global word index of each valid span's first word
     ends: np.ndarray            # (m,) last word
     scores: np.ndarray          # (m,) float32 reader score s(i, j)
+    null: float | None = None   # the no-answer option's score (no_answer: true), else None
+
+    def with_null(self) -> np.ndarray:
+        """The scores the question's softmax runs over: every valid span, then the null if any.
+        Span k keeps position k, so probabilities of spans are log_softmax(...)[:m]."""
+        return self.scores if self.null is None else np.append(self.scores, np.float32(self.null))
 
     def index(self, span: tuple[int, int] | None) -> int | None:
         """Position of a span, or None if it is not among the valid spans."""
@@ -85,13 +96,15 @@ class SpanScores:
 
 
 def combine_windows(windows: list[tuple[np.ndarray, int, np.ndarray, np.ndarray, int, int]],
-                    max_answer_words: int) -> SpanScores:
+                    max_answer_words: int, nulls: list[float] | None = None) -> SpanScores:
     """All valid spans of a question's windows, each scored once.
 
     windows: (scores (n, n) with -inf where invalid, first_word, first_tok, last_tok, ctx_start,
     ctx_end) per window, as in squadqa.data.Window. A span in several windows takes its score
     from the window where it is most central: the largest min(passage tokens to its left,
     passage tokens to its right); the earlier window on ties.
+    nulls: each window's null score (no_answer), combined by logsumexp: training puts every
+    window's null in the question's softmax, so the no-answer probability is their sum.
     """
     keys, cents, parts = [], [], []
     for scores, first_word, first_tok, last_tok, ctx_start, ctx_end in windows:
@@ -111,7 +124,8 @@ def combine_windows(windows: list[tuple[np.ndarray, int, np.ndarray, np.ndarray,
         starts, ends, scores = starts[keep], ends[keep], scores[keep]
     if not len(scores):
         raise RuntimeError("a question has no valid span")
-    return SpanScores(starts.astype(np.int32), ends.astype(np.int32), scores.astype(np.float32))
+    null = None if nulls is None else float(np.logaddexp.reduce(np.asarray(nulls, dtype=np.float64)))
+    return SpanScores(starts.astype(np.int32), ends.astype(np.int32), scores.astype(np.float32), null)
 
 
 def log_softmax(scores: np.ndarray, temperature: float = 1.0) -> np.ndarray:
@@ -165,8 +179,18 @@ class Candidates:
     logp: np.ndarray            # (k,) log-probability under the full softmax at temperature T
 
 
+def span_logp(spans: SpanScores, temperature: float = 1.0) -> tuple[np.ndarray, float | None]:
+    """Log-probabilities of every valid span and of the null (None without one), under the
+    question's one softmax at temperature T."""
+    logp = log_softmax(spans.with_null(), temperature)
+    m = len(spans.scores)
+    return logp[:m], (float(logp[m]) if spans.null is not None else None)
+
+
 def top_k(spans: SpanScores, k: int, temperature: float = 1.0) -> Candidates:
-    logp = log_softmax(spans.scores, temperature)
+    """The k most probable spans. With a null option their probabilities sum to less than 1; the
+    null itself is never a candidate, because every SQuAD v1.1 answer is a span (spec rule 5)."""
+    logp = span_logp(spans, temperature)[0]
     order = np.argsort(-logp, kind="stable")[:k]
     return Candidates(spans.starts[order], spans.ends[order], logp[order])
 
