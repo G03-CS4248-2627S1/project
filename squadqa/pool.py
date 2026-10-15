@@ -84,7 +84,7 @@ def with_pool(body: str, pool: dict) -> str:
     become \\n: GitHub reads every \\r as a line break, so \\r\\r\\n would add a blank line
     after each line and split tables."""
     block = render_pool(pool)
-    body = (body or "").replace("\r\n", "\n").replace("\r", "\n")
+    body = re.sub(r"\r*\n|\r+", "\n", body or "")          # \r\r\n (the doubling) is one line break
     if BLOCK.search(body):
         return BLOCK.sub(lambda m: block, body)
     return f"{(body or '').rstrip()}\n\n### Task pool\n\nRun with `python -m squadqa.pool` (workflow.md §5.4); don't edit this block by hand.\n\n{block}\n"
