@@ -2,7 +2,7 @@
 # Milestone 1b, joint span head: development runs on deberta-v3-base, seed 0, scored on the validation
 # split (workflow.md §5.1). Every 1b run has the no-answer option; the runs compare the four objectives
 # of Fajcik et al. (2021) and, for the bilinear ones, the length bias, the position encodings added
-# right before the pair term, and the dot-product pair term with and without rotary encodings
+# right before the pair term, the dot-product pair term, and rotary encodings on the full W
 # (spec §4.1, §4.3; literature_review.md §8).
 #
 # Run from the repo root on your own machine (Git Bash on Windows), with the soc.sh tunnel open and the
@@ -39,7 +39,7 @@ RUNS=(
   "compound-lenbias-posenc|1b-compound|lenbias-posenc|--set bilinear_pos=additive"
   "compound-plain|1b-compound|plain|--set length_bias=false"
   "compound-dot|1b-compound|dot|--set bilinear_form=dot"
-  "compound-dot-rotary|1b-compound|dot-rotary|--set bilinear_form=dot --set bilinear_pos=rotary"
+  "compound-rotary|1b-compound|rotary|--set bilinear_pos=rotary"
 )
 
 field() { cut -d'|' -f"$2" <<<"$1"; }
@@ -63,12 +63,12 @@ case "${1:-}" in
     done ;;
   smoke)
     # The new code paths: the compound head with the full pair term and additive encodings (joint,
-    # auxiliary, length bias, null), with the dot pair term and rotary encodings, and the conditional
+    # auxiliary, length bias, null), with the full pair term and rotary encodings, and the conditional
     # head. Job 1 stops after step 30 with a checkpoint at 20; job 2 resumes it and predicts. The
     # resume drops --stop-after, which is not part of the config, so the resume check passes
     # (AGENTS.md lessons).
     for spec in "1b-compound|additive|--set bilinear_pos=additive" \
-                "1b-compound|dot-rotary|--set bilinear_form=dot --set bilinear_pos=rotary" "1b-conditional||"; do
+                "1b-compound|rotary|--set bilinear_pos=rotary" "1b-conditional||"; do
       exp=$(field "$spec" 1); tag=$(field "$spec" 2)
       read -ra extra <<<"$(field "$spec" 3)"
       run_id="$(date +%F)-$exp${tag:+-$tag}-smoke-s0-t$(date +%H%M%S)"

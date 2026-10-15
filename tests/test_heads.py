@@ -36,7 +36,8 @@ def valid(mask, w, i, j, max_len=3):
 
 # The joint head (spec §4.1).
 
-PAIR_TERMS = [("full", "none"), ("full", "additive"), ("dot", "none"), ("dot", "additive"), ("dot", "rotary")]
+PAIR_TERMS = [("full", "none"), ("full", "additive"), ("full", "rotary"), ("dot", "none"), ("dot", "additive"),
+              ("dot", "rotary")]
 
 
 @pytest.mark.parametrize("form, pos", PAIR_TERMS)
@@ -138,6 +139,22 @@ def test_dot_rotary_scores_ignore_where_the_window_starts():
     assert torch.allclose(a[ok], expected[ok], atol=1e-5)
 
 
+def test_full_rotary_rotates_h_before_W_and_also_sees_absolute_position():
+    """With the full W, (R_i h_i)' W (R_j h_j): a general W doesn't commute with the rotations, so
+    unlike the dot form the scores change when every word moves by the same offset."""
+    torch.manual_seed(8)
+    head = H.JointSpanHead(8, 4, 3, 0.0, pos="rotary", form="full")
+    with torch.no_grad():
+        head.W.normal_()
+        x_first, x_last, _, mask, pos = inputs()
+        a, b = head(x_first, x_last, mask, positions=pos)["span"], head(x_first, x_last, mask, positions=pos + 17)["span"]
+        hs, he = head.start(x_first), head.end(x_last)
+        expected = (H.rotary(hs, pos) @ head.W) @ H.rotary(he, pos).transpose(1, 2) + head.u(hs) + head.v(he).transpose(1, 2)
+    ok = torch.isfinite(a)
+    assert torch.allclose(a[ok], expected[ok], atol=1e-5)
+    assert not torch.allclose(a[ok], b[ok], atol=1e-4)
+
+
 # Losses (spec §4.3, §3.4).
 
 def test_joint_nll_is_one_softmax_over_every_window_span_and_null():
@@ -216,7 +233,6 @@ def test_conditional_loss_uses_only_windows_holding_the_answer():
     (["span_head=standard", "bilinear_pos=additive"], ValueError),
     (["span_head=conditional", "bilinear_pos=additive"], ValueError),
     (["span_head=standard", "bilinear_form=dot"], ValueError),
-    (["span_head=compound", "bilinear_pos=rotary"], ValueError),          # rotary needs the dot form
     (["bilinear_form=cubic"], ValueError),
     (["bilinear_pos=learned"], ValueError),
     (["f1_target_weight=0.3"], NotImplementedError),
@@ -242,7 +258,7 @@ HEAD_CONFIGS = {
     "conditional": ["span_head=conditional"],
     "joint": ["span_head=joint", "length_bias=false", "bilinear_pos=additive"],
     "compound": ["span_head=compound", "bilinear_pos=additive"],
-    "compound-dot-rotary": ["span_head=compound", "bilinear_form=dot", "bilinear_pos=rotary"],
+    "compound-rotary": ["span_head=compound", "bilinear_pos=rotary"],
 }
 
 

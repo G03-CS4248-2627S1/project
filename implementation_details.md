@@ -38,7 +38,7 @@ W_init: zeros
 bilinear_form: full                    # joint and compound pair term (§4.1): full = h_iᵀ W h_j (biaffine) | dot = (A h_i)ᵀ(B h_j) of rank bilinear_rank (Fajcik et al.'s dot product; 1b test)
 bilinear_rank: 64                      # dot form only
 length_bias: true                      # joint and compound: learned bonus b[j − i] per span length, zero at init (§4.1)
-bilinear_pos: none                     # joint and compound, pair term only (§4.1; 1b tests): none | additive = sinusoidal encodings added to h_i, h_j | rotary = RoPE on A h_i, B h_j (dot form only)
+bilinear_pos: none                     # joint and compound, pair term only (§4.1; 1b tests): none | additive = sinusoidal encodings added to h_i, h_j | rotary = RoPE on the pair term's inputs (h_i, h_j for full; A h_i, B h_j for dot)
 no_answer: false                       # true = a null option, the span (CLS, CLS), in every softmax; never predicted (rule 5); 1b tests set it (§4.1)
 decode_topk: 10
 decode_rules: [map, mbr]               # always report both
@@ -165,7 +165,9 @@ p(i, j) = softmax of s over all valid spans (flattened)
   - `length_bias: false` drops `b`.
   - **Positions in the pair term** (`bilinear_pos`), never in `u` and `v`:
     - `additive`: sinusoidal encodings (Vaswani et al., 2017) of each word's index in the passage, added to `h_i` and `h_j` right before the pair term: `(h_i + PE(i))ᵀ W (h_j + PE(j))`. The product has terms in both the distance and the absolute positions.
-    - `rotary`: RoPE (Su et al., RoFormer) on `A h_i` and `B h_j`, as in GlobalPointer (Su et al., 2022). `(R_i A h_i)ᵀ(R_j B h_j) = (A h_i)ᵀ R_{j−i} (B h_j)` depends only on the distance, in a way that depends on content. Dot form only: a full W between the two rotations would bring the absolute positions back.
+    - `rotary`: RoPE (Su et al., RoFormer) on the pair term's inputs, rotating each by its word's position.
+      - Dot form, as in GlobalPointer (Su et al., 2022): `(R_i A h_i)ᵀ(R_j B h_j) = (A h_i)ᵀ R_{j−i} (B h_j)` depends only on the distance, in a way that depends on content.
+      - Full form (the 1b run `compound-rotary`): `(R_i h_i)ᵀ W (R_j h_j)`. A general W doesn't commute with the rotations, so the score depends on both positions, not only on their distance.
     - Without them the pair term sees position only as far as the encoder states carry it implicitly. The passage index, not the window's, gives a span the same encodings in every window. The pair term starts at zero, so they change nothing at init and the head still starts as the standard model.
 - **No-answer option** (`no_answer: true`; every 1b test sets it): the span (CLS, CLS) joins every softmax as a null, as in Fajcik et al.'s and BERT's SQuAD 2.0 models. Joint score: the pair term of `(h_c, h'_c)` plus `uᵀh_c + vᵀh'_c`, with `h_c = MLP_start(x[CLS])`, `h'_c = MLP_end(x[CLS])` and no length or position terms.
   - Each window has its own null. A question's no-answer probability is the sum over its windows, which treat them like copies of the gold (§3.4).

@@ -24,8 +24,9 @@ Options of the bilinear heads (joint, compound):
 - bilinear_pos: position information in the pair term only; u.h_i and v.h_j see h itself, so the
   head still starts as the standard model. additive: sinusoidal encodings of each word's position
   in the passage (Vaswani et al., 2017) added right before the pair term, h' = h + PE. rotary: the
-  dot form's A h_i and B h_j rotated by position (RoPE, as in GlobalPointer, Su et al., 2022), so the
-  pair term depends on j - i only.
+  pair term's inputs rotated by position (RoPE): A h_i and B h_j in the dot form, which then depends
+  on j - i only, as in GlobalPointer (Su et al., 2022); h_i and h_j before W in the full form, which
+  then depends on both positions, because a general W does not commute with the rotations.
 
 no_answer adds a null option, the span (CLS, CLS) as in Fajcik et al.'s and BERT's SQuAD 2.0
 models, to every softmax: one null per window, and a question's no-answer probability is the sum
@@ -110,7 +111,7 @@ class JointSpanHead(nn.Module):
     def __init__(self, d_model: int, d_h: int = 256, max_len: int = 30, dropout: float = 0.1,
                  length_bias: bool = True, pos: str = "none", form: str = "full", rank: int = 64):
         super().__init__()
-        if pos not in ("none", "additive", "rotary") or form not in ("full", "dot") or (pos, form) == ("rotary", "full"):
+        if pos not in ("none", "additive", "rotary") or form not in ("full", "dot"):
             raise ValueError(f"unsupported pair term: bilinear_form {form!r} with bilinear_pos {pos!r}")
         self.start = _mlp(d_model, d_h, dropout)
         self.end = _mlp(d_model, d_h, dropout)
@@ -129,6 +130,8 @@ class JointSpanHead(nn.Module):
     def pair(self, bs: torch.Tensor, be: torch.Tensor, positions: torch.Tensor | None) -> torch.Tensor:
         """(W, n, n) pair terms of start features bs and end features be (W, n, d_h)."""
         if self.form == "full":
+            if self.pos == "rotary":
+                bs, be = rotary(bs, positions), rotary(be, positions)
             return (bs @ self.W) @ be.transpose(1, 2)
         q, k = self.A(bs), self.B(be)
         if self.pos == "rotary":
@@ -311,8 +314,6 @@ def check_head_config(cfg: dict) -> None:
         raise ValueError(f"unknown bilinear_form {cfg['bilinear_form']!r} or bilinear_pos {cfg['bilinear_pos']!r}")
     if cfg["span_head"] not in BILINEAR and (cfg["bilinear_pos"] != "none" or cfg["bilinear_form"] != "full"):
         raise ValueError(f"bilinear_pos and bilinear_form need a bilinear head {BILINEAR}, not {cfg['span_head']!r}")
-    if cfg["bilinear_pos"] == "rotary" and cfg["bilinear_form"] != "dot":
-        raise ValueError("bilinear_pos rotary keeps the pair term relative only with bilinear_form dot")
 
 
 class Reader(nn.Module):

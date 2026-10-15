@@ -208,7 +208,7 @@ Second search, for plan v1.3's 6.2 (expected-F1 training) and 7.2 (decoder–met
 
 ## 8. Joint span scoring variants (search run 2026-10-15)
 
-Search for milestone 1b: alternatives to the joint head's pair term `h_iᵀ W h_j`, and ways to give it position and length. Two of them became 1b runs (`bilinear_form: dot`, `bilinear_pos: rotary`; spec §4.1). Plan v1.5 §5 lists them.
+Search for milestone 1b: alternatives to the joint head's pair term `h_iᵀ W h_j`, and ways to give it position and length. Two of them became 1b runs (`bilinear_form: dot`, and `bilinear_pos: rotary` on the full W; spec §4.1). Plan v1.5 §5 lists them.
 
 **What our head is:** the biaffine span scorer of Yu et al. (2020) below, `h_iᵀ W h_j + uᵀh_i + vᵀh_j`, plus a learned length bias `b[j − i]`.
 
@@ -234,7 +234,7 @@ Search for milestone 1b: alternatives to the joint head's pair term `h_iᵀ W h_
 - Score `q_iᵀ k_j` with `q = W_q h + b_q`, `k = W_k h + b_k`, and rotary position embedding on both: `(R_i q_i)ᵀ(R_j k_j) = q_iᵀ R_{j−i} k_j`, so the score depends on the distance j − i, in a way that depends on content. No scaling factor.
 - Without RoPE, F1 on CoNLL04 fell from 88.57 to 77.14. Their score has no other source of position, while ours has `b` and the encoder's own position signal, so expect a much smaller effect.
 - An "efficient" variant shares `q_iᵀ k_j` across entity types and adds a per-type linear term.
-- Our `bilinear_pos: rotary` follows this, on the dot form only: a full W between the rotations brings back absolute positions.
+- Our `bilinear_pos: rotary` applies it to the pair term's inputs. With the dot form it is this relative score. The 1b grid runs it on the full W instead (the user's choice, 2026-10-15): `(R_i h_i)ᵀ W (R_j h_j)` also depends on absolute position, because a general W doesn't commute with the rotations.
 
 **[Su et al. (2021). RoFormer: Enhanced Transformer with Rotary Position Embedding. arXiv 2104.09864.](https://arxiv.org/abs/2104.09864) (abstract)**
 - The source of RoPE: absolute positions encoded by rotation, so attention scores depend on relative positions.
@@ -257,6 +257,6 @@ Search for milestone 1b: alternatives to the joint head's pair term `h_iᵀ W h_
 
 ### What became 1b runs, and what did not
 
-- **Run:** `compound-dot` (Fajcik et al.'s dot product as a low-rank pair term) and `compound-dot-rotary` (GlobalPointer's rotary encodings), next to the full W with and without additive encodings (`slurm/joint_head_tests.sh`).
+- **Run:** `compound-dot` (Fajcik et al.'s dot product as a low-rank pair term) and `compound-rotary` (rotary encodings, as in GlobalPointer, but on the full W), next to the full W with and without additive encodings (`slurm/joint_head_tests.sh`).
 - **Not run:** the MLP pair scorer (Fajcik et al. found the dot product better for BERT-type models, and it costs as much as the conditional head), span pooling (small effect after fine-tuning), ALiBi and T5 biases (alternatives to `b`, whose problem is the learning rate, not its form).
 
