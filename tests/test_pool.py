@@ -26,7 +26,13 @@ def test_the_block_round_trips_and_replaces_itself():
     assert P.parse_pool(again) == changed and again.count("pool:begin") == 1
 
 
-@pytest.mark.parametrize("bad", [{**POOL, "commit": "abc1234"}, {k: v for k, v in POOL.items() if k != "script"},
+def test_the_body_gets_plain_newlines():
+    """A body read back from GitHub can carry \\r\\n (or worse); every \\r is a line break there."""
+    body = P.with_pool("| a | b |\r\r\n|---|---|\r\n| 1 | 2 |\r\n", POOL)
+    assert "\r" not in body and "| a | b |\n|---|---|\n| 1 | 2 |" in body and P.parse_pool(body) == POOL
+
+
+@pytest.mark.parametrize("bad",[{**POOL, "commit": "abc1234"}, {k: v for k, v in POOL.items() if k != "script"},
                                  {**POOL, "tasks": {"a b": {"args": []}}}, {**POOL, "tasks": {"t": {"argv": []}}}])
 def test_malformed_pools_raise(bad):
     with pytest.raises(ValueError):

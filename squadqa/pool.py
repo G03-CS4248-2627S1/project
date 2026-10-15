@@ -80,9 +80,12 @@ def render_pool(pool: dict) -> str:
 
 
 def with_pool(body: str, pool: dict) -> str:
-    """The issue body with its pool block replaced, or appended if it has none."""
+    """The issue body with its pool block replaced, or appended if it has none. Line endings
+    become \\n: GitHub reads every \\r as a line break, so \\r\\r\\n would add a blank line
+    after each line and split tables."""
     block = render_pool(pool)
-    if BLOCK.search(body or ""):
+    body = (body or "").replace("\r\n", "\n").replace("\r", "\n")
+    if BLOCK.search(body):
         return BLOCK.sub(lambda m: block, body)
     return f"{(body or '').rstrip()}\n\n### Task pool\n\nRun with `python -m squadqa.pool` (workflow.md §5.4); don't edit this block by hand.\n\n{block}\n"
 
@@ -138,10 +141,13 @@ def pick(states: dict[str, Task], names: list[str], n: int) -> list[str]:
 # GitHub, git and the cluster.
 
 def sh(cmd: list[str], check: bool = True, input: str | None = None) -> str:
-    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", input=input)
+    """Run a command and return its stdout. Bytes in and out: text-mode pipes on Windows turn
+    each \\n written to stdin into \\r\\n, which doubled the \\r of every line of an issue body."""
+    r = subprocess.run(cmd, capture_output=True, input=None if input is None else input.encode("utf-8"))
+    out, err = r.stdout.decode("utf-8", "replace"), r.stderr.decode("utf-8", "replace")
     if check and r.returncode != 0:
-        raise SystemExit(f"{' '.join(cmd[:4])} ... failed:\n{r.stdout}{r.stderr}")
-    return r.stdout
+        raise SystemExit(f"{' '.join(cmd[:4])} ... failed:\n{out}{err}")
+    return out
 
 
 def bash() -> str:
