@@ -208,7 +208,7 @@ Second search, for plan v1.3's 6.2 (expected-F1 training) and 7.2 (decoder–met
 
 ## 8. Joint span scoring variants (search run 2026-10-15)
 
-Search for milestone 1b: alternatives to the joint head's pair term `h_iᵀ W h_j`, and ways to give it position and length. Two of them became 1b runs (`bilinear_form: dot`, `bilinear_pos: rotary`; spec §4.1). None is in the plan yet (plan v1.4).
+Search for milestone 1b: alternatives to the joint head's pair term `h_iᵀ W h_j`, and ways to give it position and length. Two of them became 1b runs (`bilinear_form: dot`, `bilinear_pos: rotary`; spec §4.1). Plan v1.5 §5 lists them.
 
 **What our head is:** the biaffine span scorer of Yu et al. (2020) below, `h_iᵀ W h_j + uᵀh_i + vᵀh_j`, plus a learned length bias `b[j − i]`.
 
