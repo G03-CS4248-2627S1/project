@@ -11,8 +11,10 @@ span_head: compound                    # Fajcik et al. (2021) objectives: compou
 aux_independent_weight: 1.0            # compound only (Fajcik et al., 2021)
 head_dim: 256
 W_init: zeros
+bilinear_form: full                    # joint and compound pair term (§4.1): full = h_iᵀ W h_j (biaffine) | dot = (A h_i)ᵀ(B h_j) of rank bilinear_rank (Fajcik et al.'s dot product; 1b test)
+bilinear_rank: 64                      # dot form only
 length_bias: true                      # joint and compound: learned bonus b[j − i] per span length, zero at init (§4.1)
-bilinear_pos_enc: false                # joint and compound: sinusoidal word-position encodings added to h_i, h_j right before the bilinear term only (§4.1; 1b test)
+bilinear_pos: none                     # joint and compound, pair term only (§4.1; 1b tests): none | additive = sinusoidal encodings added to h_i, h_j | rotary = RoPE on A h_i, B h_j (dot form only)
 no_answer: false                       # true = a null option, the span (CLS, CLS), in every softmax; never predicted (rule 5); 1b tests set it (§4.1)
 decode_topk: 10
 decode_rules: [map, mbr]               # always report both

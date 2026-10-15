@@ -3,7 +3,7 @@
 #   bash .claude/skills/soc-cluster/soc.sh submit slurm/train_reader.sbatch [train_reader args]
 # Experiment:       soc.sh submit --export=ALL,EXPERIMENT=row1-compound slurm/train_reader.sbatch
 # Another seed:     soc.sh submit --export=ALL,SEED=1 slurm/train_reader.sbatch
-# A --set variant:  soc.sh submit --export=ALL,EXPERIMENT=1b-joint,TAG=posenc slurm/train_reader.sbatch --set bilinear_pos_enc=true
+# A --set variant:  soc.sh submit --export=ALL,EXPERIMENT=1b-joint,TAG=posenc slurm/train_reader.sbatch --set bilinear_pos=additive
 #   TAG goes into the run id (<date>-<experiment>-<tag>-s<seed>-j<job id>), so --set variants stay apart.
 # Resume a run:     soc.sh submit --export=ALL,RUN_ID=<run id> slurm/train_reader.sbatch (same args)
 # Smoke run (spec §9): soc.sh submit slurm/train_reader.sbatch --max-steps 40 --stop-after 30 --set train.checkpoint_every=20

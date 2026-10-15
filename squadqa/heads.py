@@ -7,8 +7,8 @@ Objectives of Extractive Question Answering", MRQA; their names in brackets):
 
 - standard (I, independent; ladder row 0): h_i = MLP_start(x[first_tok[i]]), h_j = MLP_end(x[last_tok[j]]),
   start logit u.h_i, end logit v.h_j, span score s(i, j) = u.h_i + v.h_j. Loss: start NLL + end NLL.
-- joint (J): s(i, j) = h_i' W h_j' + u.h_i + v.h_j + b[j - i] (spec §4.1), one softmax over all
-  valid spans. Loss: span NLL. With W = 0 and b = 0 it is the standard head.
+- joint (J): s(i, j) = pair(h_i, h_j) + u.h_i + v.h_j + b[j - i] (spec §4.1), one softmax over
+  all valid spans. Loss: span NLL. With the pair term and b at zero it is the standard head.
 - compound (I+J; ladder row 1): the joint loss + aux_independent_weight x the standard loss on the
   same u.h_i and v.h_j. Decoding uses the joint scores.
 - conditional (JC): the standard start logit, and an end distribution given the start i,
@@ -17,10 +17,15 @@ Objectives of Extractive Question Answering", MRQA; their names in brackets):
   scores every valid span exactly, s(i, j) = start logit + log p(j | i), not with their top-k beam.
 
 Options of the bilinear heads (joint, compound):
+- bilinear_form: the pair term. full = h_i' W h_j' with W zero at init (the biaffine scorer of
+  Yu et al., 2020); dot = (A h_i')(B h_j'), A and B of rank bilinear_rank (the dot product Fajcik et
+  al. found best for BERT-type models), B zero at init so the gradient reaches both.
 - length_bias: the learned bonus b[j - i], zero at init.
-- bilinear_pos_enc: sinusoidal encodings of each word's position in the passage (Vaswani et al.,
-  2017) added to h_i and h_j right before the bilinear term only: h' = h + PE. The terms u.h_i and
-  v.h_j see h itself, so with W = 0 at init the head still starts as the standard model.
+- bilinear_pos: position information in the pair term only; u.h_i and v.h_j see h itself, so the
+  head still starts as the standard model. additive: sinusoidal encodings of each word's position
+  in the passage (Vaswani et al., 2017) added right before the pair term, h' = h + PE. rotary: the
+  dot form's A h_i and B h_j rotated by position (RoPE, as in GlobalPointer, Su et al., 2022), so the
+  pair term depends on j - i only.
 
 no_answer adds a null option, the span (CLS, CLS) as in Fajcik et al.'s and BERT's SQuAD 2.0
 models, to every softmax: one null per window, and a question's no-answer probability is the sum
@@ -50,6 +55,21 @@ def sinusoidal(positions: torch.Tensor, dim: int) -> torch.Tensor:
     k = torch.arange(0, dim, 2, device=positions.device, dtype=torch.float32)
     angle = positions[..., None].float() / (10000.0 ** (k / dim))
     return torch.stack([angle.sin(), angle.cos()], dim=-1).flatten(-2)
+
+
+def rotary(x: torch.Tensor, positions: torch.Tensor) -> torch.Tensor:
+    """Rotary position embedding (Su et al., RoFormer): rotate each pair of dimensions (2k, 2k+1)
+    of x (..., n, r) by position * 10000^(-2k / r), positions (..., n). Then
+    rotary(q, i) . rotary(k, j) = q . R(j - i) k depends only on j - i. Returns float32."""
+    r = x.size(-1)
+    if r % 2:
+        raise ValueError(f"rotary encodings need an even dimension, got {r}")
+    k = torch.arange(0, r, 2, device=x.device, dtype=torch.float32)
+    angle = positions[..., None].float() / (10000.0 ** (k / r))
+    cos, sin = angle.cos(), angle.sin()
+    x = x.float()
+    x0, x1 = x[..., 0::2], x[..., 1::2]
+    return torch.stack([x0 * cos - x1 * sin, x0 * sin + x1 * cos], dim=-1).flatten(-2)
 
 
 class StandardSpanHead(nn.Module):
@@ -84,35 +104,58 @@ class StandardSpanHead(nn.Module):
 
 
 class JointSpanHead(nn.Module):
-    """s(i, j) = h_i' W h_j' + u.h_i + v.h_j + b[j - i] (spec §4.1-4.2), h' = h (+ PE)."""
+    """s(i, j) = pair(h_i, h_j) + u.h_i + v.h_j + b[j - i] (spec §4.1-4.2); the pair term is
+    h_i' W h_j' (form full) or (A h_i')(B h_j') (form dot), h' = h (+ PE), rotated for rotary."""
 
     def __init__(self, d_model: int, d_h: int = 256, max_len: int = 30, dropout: float = 0.1,
-                 length_bias: bool = True, pos_enc: bool = False):
+                 length_bias: bool = True, pos: str = "none", form: str = "full", rank: int = 64):
         super().__init__()
+        if pos not in ("none", "additive", "rotary") or form not in ("full", "dot") or (pos, form) == ("rotary", "full"):
+            raise ValueError(f"unsupported pair term: bilinear_form {form!r} with bilinear_pos {pos!r}")
         self.start = _mlp(d_model, d_h, dropout)
         self.end = _mlp(d_model, d_h, dropout)
-        self.W = nn.Parameter(torch.zeros(d_h, d_h))                         # zero init (W_init: zeros)
+        if form == "full":
+            self.W = nn.Parameter(torch.zeros(d_h, d_h))                     # zero init (W_init: zeros)
+        else:
+            self.A = nn.Linear(d_h, rank, bias=False)
+            self.B = nn.Linear(d_h, rank, bias=False)
+            nn.init.zeros_(self.B.weight)                                   # zero pair term, nonzero gradient
         self.u = nn.Linear(d_h, 1)
         self.v = nn.Linear(d_h, 1)
         self.len_bias = nn.Parameter(torch.zeros(max_len)) if length_bias else None   # b[length - 1]
-        self.pos_enc = pos_enc
+        self.pos, self.form = pos, form
         self.max_len = max_len
+
+    def pair(self, bs: torch.Tensor, be: torch.Tensor, positions: torch.Tensor | None) -> torch.Tensor:
+        """(W, n, n) pair terms of start features bs and end features be (W, n, d_h)."""
+        if self.form == "full":
+            return (bs @ self.W) @ be.transpose(1, 2)
+        q, k = self.A(bs), self.B(be)
+        if self.pos == "rotary":
+            q, k = rotary(q, positions), rotary(k, positions)
+        return q @ k.transpose(1, 2)
+
+    def pair_null(self, cs: torch.Tensor, ce: torch.Tensor) -> torch.Tensor:
+        """(W,) pair term of the null (CLS, CLS), without position terms, summed in fp32."""
+        if self.form == "full":
+            return ((cs @ self.W).float() * ce.float()).sum(-1)
+        return (self.A(cs).float() * self.B(ce).float()).sum(-1)
 
     def forward(self, x_first: torch.Tensor, x_last: torch.Tensor, word_mask: torch.Tensor,
                 x_cls: torch.Tensor | None = None, positions: torch.Tensor | None = None) -> dict:
         """As StandardSpanHead.forward, plus "span": (W, n, n) joint scores, -inf where invalid, and
         with x_cls "null": (W,) the joint score of the span (CLS, CLS), without position terms.
-        positions: (W, n) passage word index of each window word; needed with pos_enc."""
+        positions: (W, n) passage word index of each window word; needed with bilinear_pos."""
         hs, he = self.start(x_first), self.end(x_last)
         start = self.u(hs).squeeze(-1).float()
         end = self.v(he).squeeze(-1).float()
+        if self.pos != "none" and positions is None:
+            raise ValueError(f"bilinear_pos {self.pos!r} needs the word positions")
         bs, be = hs, he
-        if self.pos_enc:
-            if positions is None:
-                raise ValueError("bilinear_pos_enc needs the word positions")
+        if self.pos == "additive":
             pe = sinusoidal(positions, hs.size(-1))
             bs, be = hs + pe, he + pe
-        span = ((bs @ self.W) @ be.transpose(1, 2)).float() + start[:, :, None] + end[:, None, :]
+        span = self.pair(bs, be, positions).float() + start[:, :, None] + end[:, None, :]
         if self.len_bias is not None:
             idx = torch.arange(span.size(-1), device=span.device)
             span = span + self.len_bias[(idx[None, :] - idx[:, None]).clamp(0, self.max_len - 1)]
@@ -122,7 +165,7 @@ class JointSpanHead(nn.Module):
             cs, ce = self.start(x_cls), self.end(x_cls)
             out["start_null"] = self.u(cs).squeeze(-1).float()
             out["end_null"] = self.v(ce).squeeze(-1).float()
-            out["null"] = ((cs @ self.W).float() * ce.float()).sum(-1) + out["start_null"] + out["end_null"]
+            out["null"] = self.pair_null(cs, ce) + out["start_null"] + out["end_null"]
         return out
 
     def span_scores(self, out: dict, word_mask: torch.Tensor) -> torch.Tensor:
@@ -264,8 +307,12 @@ def check_head_config(cfg: dict) -> None:
                                   "set f1_target_weight=0 and risk_weight=0")
     if cfg["span_head"] in BILINEAR and cfg["W_init"] != "zeros":
         raise NotImplementedError(f"W_init {cfg['W_init']!r} is not built; only zeros")
-    if cfg["bilinear_pos_enc"] and cfg["span_head"] not in BILINEAR:
-        raise ValueError(f"bilinear_pos_enc needs a bilinear head {BILINEAR}, not {cfg['span_head']!r}")
+    if cfg["bilinear_form"] not in ("full", "dot") or cfg["bilinear_pos"] not in ("none", "additive", "rotary"):
+        raise ValueError(f"unknown bilinear_form {cfg['bilinear_form']!r} or bilinear_pos {cfg['bilinear_pos']!r}")
+    if cfg["span_head"] not in BILINEAR and (cfg["bilinear_pos"] != "none" or cfg["bilinear_form"] != "full"):
+        raise ValueError(f"bilinear_pos and bilinear_form need a bilinear head {BILINEAR}, not {cfg['span_head']!r}")
+    if cfg["bilinear_pos"] == "rotary" and cfg["bilinear_form"] != "dot":
+        raise ValueError("bilinear_pos rotary keeps the pair term relative only with bilinear_form dot")
 
 
 class Reader(nn.Module):
@@ -286,7 +333,8 @@ class Reader(nn.Module):
         elif self.kind == "conditional":
             self.head = ConditionalSpanHead(*args)
         else:
-            self.head = JointSpanHead(*args, length_bias=cfg["length_bias"], pos_enc=cfg["bilinear_pos_enc"])
+            self.head = JointSpanHead(*args, length_bias=cfg["length_bias"], pos=cfg["bilinear_pos"],
+                                      form=cfg["bilinear_form"], rank=cfg["bilinear_rank"])
 
     def forward(self, batch: dict) -> dict:
         x = self.encoder(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"]).last_hidden_state

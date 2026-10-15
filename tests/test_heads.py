@@ -36,16 +36,20 @@ def valid(mask, w, i, j, max_len=3):
 
 # The joint head (spec §4.1).
 
-@pytest.mark.parametrize("pos_enc", [False, True])
+PAIR_TERMS = [("full", "none"), ("full", "additive"), ("dot", "none"), ("dot", "additive"), ("dot", "rotary")]
+
+
+@pytest.mark.parametrize("form, pos", PAIR_TERMS)
 @pytest.mark.parametrize("length_bias", [False, True])
-def test_joint_head_starts_as_the_standard_head(length_bias, pos_enc):
-    """Spec §4.5 equivalence test: with W = 0 and b = 0, the same scores and argmax as the
-    standard head, with or without position encodings; the null too."""
+def test_joint_head_starts_as_the_standard_head(length_bias, form, pos):
+    """Spec §4.5 equivalence test: with the pair term and b at zero, the same scores and argmax as
+    the standard head, for every pair term and position option; the null too."""
     torch.manual_seed(0)
     std = H.StandardSpanHead(8, 4, 3, 0.0)
-    joint = H.JointSpanHead(8, 4, 3, 0.0, length_bias=length_bias, pos_enc=pos_enc)
+    joint = H.JointSpanHead(8, 4, 3, 0.0, length_bias=length_bias, pos=pos, form=form, rank=4)
     missing = joint.load_state_dict(std.state_dict(), strict=False).missing_keys     # same MLPs, u and v
-    assert set(missing) == {"W"} | ({"len_bias"} if length_bias else set())
+    pair = {"W"} if form == "full" else {"A.weight", "B.weight"}
+    assert set(missing) == pair | ({"len_bias"} if length_bias else set())
     x_first, x_last, x_cls, mask, pos = inputs()
     with torch.no_grad():
         std_out = std(x_first, x_last, mask, x_cls)
@@ -59,7 +63,7 @@ def test_joint_head_starts_as_the_standard_head(length_bias, pos_enc):
 
 def test_joint_score_formula_with_position_encodings_and_length_bias():
     torch.manual_seed(1)
-    head = H.JointSpanHead(8, 4, 3, 0.0, length_bias=True, pos_enc=True)
+    head = H.JointSpanHead(8, 4, 3, 0.0, length_bias=True, pos="additive")
     with torch.no_grad():
         head.W.normal_()
         head.len_bias.copy_(torch.tensor([0.5, -1.0, 2.0]))
@@ -82,8 +86,8 @@ def test_joint_score_formula_with_position_encodings_and_length_bias():
 
 def test_position_encodings_change_scores_once_W_is_learned():
     torch.manual_seed(2)
-    plain = H.JointSpanHead(8, 4, 3, 0.0, pos_enc=False)
-    with_pe = H.JointSpanHead(8, 4, 3, 0.0, pos_enc=True)
+    plain = H.JointSpanHead(8, 4, 3, 0.0, pos="none")
+    with_pe = H.JointSpanHead(8, 4, 3, 0.0, pos="additive")
     with torch.no_grad():
         plain.W.normal_()
     with_pe.load_state_dict(plain.state_dict())
@@ -102,6 +106,36 @@ def test_sinusoidal_products_depend_only_on_the_distance():
     for k in (0, 1, 7):
         dots = (pe[:60 - k] * pe[k:]).sum(-1)
         assert torch.allclose(dots, dots[0].expand_as(dots), atol=1e-4)
+
+
+def test_rotary_products_depend_only_on_the_distance():
+    g = torch.Generator().manual_seed(6)
+    q, k = torch.randn(8, generator=g), torch.randn(8, generator=g)
+    for i, j in [(0, 5), (3, 8), (40, 45), (7, 2)]:
+        a = (H.rotary(q[None], torch.tensor([i])) * H.rotary(k[None], torch.tensor([j]))).sum()
+        b = (q * H.rotary(k[None], torch.tensor([j - i]))[0]).sum()
+        assert float(a) == pytest.approx(float(b), abs=1e-5)
+
+
+def test_dot_rotary_scores_ignore_where_the_window_starts():
+    """GlobalPointer's property: the rotary pair term depends on j - i, so moving every word by the
+    same offset changes nothing; additive encodings also carry the absolute position."""
+    torch.manual_seed(7)
+    rot = H.JointSpanHead(8, 4, 3, 0.0, pos="rotary", form="dot", rank=4)
+    add = H.JointSpanHead(8, 4, 3, 0.0, pos="additive", form="dot", rank=4)
+    with torch.no_grad():
+        rot.B.weight.normal_()
+        add.load_state_dict(rot.state_dict())
+        x_first, x_last, _, mask, pos = inputs()
+        a, b = rot(x_first, x_last, mask, positions=pos)["span"], rot(x_first, x_last, mask, positions=pos + 17)["span"]
+        ok = torch.isfinite(a)
+        assert torch.allclose(a[ok], b[ok], atol=1e-4)
+        c, d = add(x_first, x_last, mask, positions=pos)["span"], add(x_first, x_last, mask, positions=pos + 17)["span"]
+        assert not torch.allclose(c[ok], d[ok], atol=1e-4)
+        hs, he = rot.start(x_first), rot.end(x_last)
+        q, k = H.rotary(rot.A(hs), pos), H.rotary(rot.B(he), pos)
+        expected = q @ k.transpose(1, 2) + rot.u(hs) + rot.v(he).transpose(1, 2)        # b is still zero
+    assert torch.allclose(a[ok], expected[ok], atol=1e-5)
 
 
 # Losses (spec §4.3, §3.4).
@@ -179,8 +213,12 @@ def test_conditional_loss_uses_only_windows_holding_the_answer():
 
 @pytest.mark.parametrize("overrides, error", [
     (["span_head=pointer"], ValueError),
-    (["span_head=standard", "bilinear_pos_enc=true"], ValueError),
-    (["span_head=conditional", "bilinear_pos_enc=true"], ValueError),
+    (["span_head=standard", "bilinear_pos=additive"], ValueError),
+    (["span_head=conditional", "bilinear_pos=additive"], ValueError),
+    (["span_head=standard", "bilinear_form=dot"], ValueError),
+    (["span_head=compound", "bilinear_pos=rotary"], ValueError),          # rotary needs the dot form
+    (["bilinear_form=cubic"], ValueError),
+    (["bilinear_pos=learned"], ValueError),
     (["f1_target_weight=0.3"], NotImplementedError),
     (["risk_weight=0.1"], NotImplementedError),
     (["W_init=random"], NotImplementedError),
@@ -202,8 +240,9 @@ def test_old_run_configs_get_the_settings_they_were_trained_with():
 HEAD_CONFIGS = {
     "standard": ["span_head=standard"],
     "conditional": ["span_head=conditional"],
-    "joint": ["span_head=joint", "length_bias=false", "bilinear_pos_enc=true"],
-    "compound": ["span_head=compound", "bilinear_pos_enc=true"],
+    "joint": ["span_head=joint", "length_bias=false", "bilinear_pos=additive"],
+    "compound": ["span_head=compound", "bilinear_pos=additive"],
+    "compound-dot-rotary": ["span_head=compound", "bilinear_form=dot", "bilinear_pos=rotary"],
 }
 
 

@@ -35,8 +35,10 @@ span_head: compound                    # Fajcik et al. (2021) objectives: compou
 aux_independent_weight: 1.0            # compound only (Fajcik et al., 2021)
 head_dim: 256
 W_init: zeros
+bilinear_form: full                    # joint and compound pair term (§4.1): full = h_iᵀ W h_j (biaffine) | dot = (A h_i)ᵀ(B h_j) of rank bilinear_rank (Fajcik et al.'s dot product; 1b test)
+bilinear_rank: 64                      # dot form only
 length_bias: true                      # joint and compound: learned bonus b[j − i] per span length, zero at init (§4.1)
-bilinear_pos_enc: false                # joint and compound: sinusoidal word-position encodings added to h_i, h_j right before the bilinear term only (§4.1; 1b test)
+bilinear_pos: none                     # joint and compound, pair term only (§4.1; 1b tests): none | additive = sinusoidal encodings added to h_i, h_j | rotary = RoPE on A h_i, B h_j (dot form only)
 no_answer: false                       # true = a null option, the span (CLS, CLS), in every softmax; never predicted (rule 5); 1b tests set it (§4.1)
 decode_topk: 10
 decode_rules: [map, mbr]               # always report both
@@ -158,10 +160,14 @@ p(i, j) = softmax of s over all valid spans (flattened)
 ```
 - `W` and `b` start at zero, so the head starts as the standard start + end model.
 - Compute the full n × n word-level matrix and mask it. No band tricks are needed at these sizes.
-- **Head options** (joint and compound; milestone 1b tests them):
+- **Head options** (joint and compound; milestone 1b tests them; the survey behind them is in `literature_review.md` §8):
+  - **Pair term** (`bilinear_form`): `full` is `h_iᵀ W h_j`, the biaffine scorer of Yu et al. (2020). `dot` is `(A h_i)ᵀ(B h_j)` with A and B of rank `bilinear_rank` (64): the dot product of projections that Fajcik et al. found best for BERT-type models, as a low-rank W. B starts at zero and A at random, so the pair term starts at zero and both factors get gradients; two zero factors would never move.
   - `length_bias: false` drops `b`.
-  - `bilinear_pos_enc: true` adds sinusoidal encodings (Vaswani et al., 2017) of each word's index in the passage to `h_i` and `h_j` right before the bilinear term only: `s(i, j) = (h_i + PE(i))ᵀ W (h_j + PE(j)) + uᵀh_i + vᵀh_j + b[j − i]`. Without them the bilinear term sees position only as far as the encoder states carry it implicitly; with them `W` can learn distance effects directly. The passage index, not the window's, gives a span the same encodings in every window. With `W = 0` at init they change nothing, so the head still starts as the standard model.
-- **No-answer option** (`no_answer: true`; every 1b test sets it): the span (CLS, CLS) joins every softmax as a null, as in Fajcik et al.'s and BERT's SQuAD 2.0 models. Joint score: `s_null = h_cᵀ W h'_c + uᵀh_c + vᵀh'_c`, with `h_c = MLP_start(x[CLS])`, `h'_c = MLP_end(x[CLS])` and no length or position terms.
+  - **Positions in the pair term** (`bilinear_pos`), never in `u` and `v`:
+    - `additive`: sinusoidal encodings (Vaswani et al., 2017) of each word's index in the passage, added to `h_i` and `h_j` right before the pair term: `(h_i + PE(i))ᵀ W (h_j + PE(j))`. The product has terms in both the distance and the absolute positions.
+    - `rotary`: RoPE (Su et al., RoFormer) on `A h_i` and `B h_j`, as in GlobalPointer (Su et al., 2022). `(R_i A h_i)ᵀ(R_j B h_j) = (A h_i)ᵀ R_{j−i} (B h_j)` depends only on the distance, in a way that depends on content. Dot form only: a full W between the two rotations would bring the absolute positions back.
+    - Without them the pair term sees position only as far as the encoder states carry it implicitly. The passage index, not the window's, gives a span the same encodings in every window. The pair term starts at zero, so they change nothing at init and the head still starts as the standard model.
+- **No-answer option** (`no_answer: true`; every 1b test sets it): the span (CLS, CLS) joins every softmax as a null, as in Fajcik et al.'s and BERT's SQuAD 2.0 models. Joint score: the pair term of `(h_c, h'_c)` plus `uᵀh_c + vᵀh'_c`, with `h_c = MLP_start(x[CLS])`, `h'_c = MLP_end(x[CLS])` and no length or position terms.
   - Each window has its own null. A question's no-answer probability is the sum over its windows, which treat them like copies of the gold (§3.4).
   - On SQuAD v1.1 no question targets it, so training only pushes it down. Decoding never returns it (rule 5, §4.4).
   - It gets a positive target only if a reader trains on unanswerable questions. That is not built: row 5 gives them to the verifier only (§5.1).
@@ -277,7 +283,7 @@ risk = (logp.exp() * torch.where(valid, f1_loss, torch.zeros_like(f1_loss))).sum
   2. The cross span is c = (i1, j2), if valid; without one the ratio below is 0.
   3. Report p(c) / (p(a) + p(b) + p(c)), with p calibrated (the run's temperature), bucketed by top-1 probability (< 0.5, 0.5–0.9, > 0.9), for the standard and joint heads.
   4. Also count how often each decision rule answers with the cross span (under `mbr_utility: normalized`, a boundary variant of it counts), with the official scores of those answers. This shows whether cross spans cause errors (plan §5: expected-F1 decoding favours them).
-- **Equivalence test:** with W = 0 and b = 0, the joint head's argmax must equal the argmax over valid (i, j) of `u·h_i + v·h_j`, with or without `bilinear_pos_enc` (`tests/test_heads.py`).
+- **Equivalence test:** with W = 0 and b = 0, the joint head's argmax must equal the argmax over valid (i, j) of `u·h_i + v·h_j`, for every `bilinear_form` and `bilinear_pos` (`tests/test_heads.py`).
 
 ---
 

@@ -1,8 +1,9 @@
 #!/bin/bash
 # Milestone 1b, joint span head: development runs on deberta-v3-base, seed 0, scored on the validation
 # split (workflow.md §5.1). Every 1b run has the no-answer option; the runs compare the four objectives
-# of Fajcik et al. (2021) and, for the bilinear ones, the length bias and the position encodings
-# added right before the bilinear term (spec §4.1, §4.3).
+# of Fajcik et al. (2021) and, for the bilinear ones, the length bias, the position encodings added
+# right before the pair term, and the dot-product pair term with and without rotary encodings
+# (spec §4.1, §4.3; literature_review.md §8).
 #
 # Run from the repo root on your own machine (Git Bash on Windows), with the soc.sh tunnel open and the
 # cluster clone at this commit (soc.sh submit refuses otherwise). Jobs use shared GPU time: agents
@@ -29,13 +30,15 @@ RUNS=(
   "independent|1b-independent||"
   "conditional|1b-conditional||"
   "joint-lenbias|1b-joint|lenbias|"
-  "joint-posenc|1b-joint|posenc|--set length_bias=false --set bilinear_pos_enc=true"
-  "joint-lenbias-posenc|1b-joint|lenbias-posenc|--set bilinear_pos_enc=true"
+  "joint-posenc|1b-joint|posenc|--set length_bias=false --set bilinear_pos=additive"
+  "joint-lenbias-posenc|1b-joint|lenbias-posenc|--set bilinear_pos=additive"
   "joint-plain|1b-joint|plain|--set length_bias=false"
   "compound-lenbias|1b-compound|lenbias|"
-  "compound-posenc|1b-compound|posenc|--set length_bias=false --set bilinear_pos_enc=true"
-  "compound-lenbias-posenc|1b-compound|lenbias-posenc|--set bilinear_pos_enc=true"
+  "compound-posenc|1b-compound|posenc|--set length_bias=false --set bilinear_pos=additive"
+  "compound-lenbias-posenc|1b-compound|lenbias-posenc|--set bilinear_pos=additive"
   "compound-plain|1b-compound|plain|--set length_bias=false"
+  "compound-dot|1b-compound|dot|--set bilinear_form=dot"
+  "compound-dot-rotary|1b-compound|dot-rotary|--set bilinear_form=dot --set bilinear_pos=rotary"
 )
 
 field() { cut -d'|' -f"$2" <<<"$1"; }
@@ -58,14 +61,16 @@ case "${1:-}" in
         "$(field "$r" 1)" "$GPUS" "$TIME" "$(field "$r" 2)" "${tag:+,TAG=$tag}" "$(field "$r" 4)"
     done ;;
   smoke)
-    # The two new code paths: the compound head with every option (joint, auxiliary, length bias,
-    # position encodings, null) and the conditional head. Job 1 stops after step 30 with a checkpoint
-    # at 20; job 2 resumes it and predicts. The resume drops --stop-after, which is not part of the
-    # config, so the resume check passes (AGENTS.md lessons).
-    for spec in "1b-compound|--set bilinear_pos_enc=true" "1b-conditional|"; do
-      exp=$(field "$spec" 1)
-      read -ra extra <<<"$(field "$spec" 2)"
-      run_id="$(date +%F)-$exp-smoke-s0-t$(date +%H%M%S)"
+    # The new code paths: the compound head with the full pair term and additive encodings (joint,
+    # auxiliary, length bias, null), with the dot pair term and rotary encodings, and the conditional
+    # head. Job 1 stops after step 30 with a checkpoint at 20; job 2 resumes it and predicts. The
+    # resume drops --stop-after, which is not part of the config, so the resume check passes
+    # (AGENTS.md lessons).
+    for spec in "1b-compound|additive|--set bilinear_pos=additive" \
+                "1b-compound|dot-rotary|--set bilinear_form=dot --set bilinear_pos=rotary" "1b-conditional||"; do
+      exp=$(field "$spec" 1); tag=$(field "$spec" 2)
+      read -ra extra <<<"$(field "$spec" 3)"
+      run_id="$(date +%F)-$exp${tag:+-$tag}-smoke-s0-t$(date +%H%M%S)"
       args=(--max-steps 40 --set train.checkpoint_every=20 "${extra[@]}")
       first=$(submit --time=00:20:00 --export=ALL,EXPERIMENT="$exp",RUN_ID="$run_id" -- "${args[@]}" --stop-after 30)
       second=$(submit --time=00:20:00 --dependency=afterany:"$first" --export=ALL,EXPERIMENT="$exp",RUN_ID="$run_id" -- "${args[@]}")
@@ -110,11 +115,12 @@ for d in sorted(Path("results").iterdir()):
     e3 = d / "cross_span_validation.json"
     e3 = json.loads(e3.read_text(encoding="utf-8"))["ratio"] if e3.exists() else None
     v = m["validation"]
-    rows.append([d.name, head, scalar(cfg, "length_bias") if bil else "", scalar(cfg, "bilinear_pos_enc") if bil else "",
+    rows.append([d.name, head, scalar(cfg, "bilinear_form") if bil else "", scalar(cfg, "length_bias") if bil else "",
+                 scalar(cfg, "bilinear_pos") if bil else "",
                  scalar(cfg, "no_answer"), f"{v['map']['exact']:.2f} / {v['map']['f1']:.2f}",
                  f"{v['mbr']['exact']:.2f} / {v['mbr']['f1']:.2f}", f"{m['calibration']['temperature']:.2f}",
                  f"{na['mean_p']:.4f}" if na else "", f"{e3['<0.5']['mean']:.3f}" if e3 else ""])
-head = ["run", "span_head", "length_bias", "pos_enc", "no_answer", "MAP EM / F1", "MBR EM / F1", "T", "mean p(null)",
+head = ["run", "span_head", "pair", "length_bias", "positions", "no_answer", "MAP EM / F1", "MBR EM / F1", "T", "mean p(null)",
         "E3 ratio, top-1 < 0.5"]
 print("| " + " | ".join(head) + " |\n|" + "---|" * len(head))
 for r in rows:
