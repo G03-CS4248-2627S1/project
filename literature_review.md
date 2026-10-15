@@ -204,3 +204,59 @@ Second search, for plan v1.3's 6.2 (expected-F1 training) and 7.2 (decoder–met
 **[Müller, Kornblith & Hinton (2019). When Does Label Smoothing Help? NeurIPS.](https://papers.nips.cc/paper/8717-when-does-label-smoothing-help) (abstract)**
 - Label smoothing improves calibration and beam search. F1-weighted targets are a structured label smoothing, so they may help calibration while the risk loss hurts it. Not cited in the plan.
 
+---
+
+## 8. Joint span scoring variants (search run 2026-10-15)
+
+Search for milestone 1b: alternatives to the joint head's pair term `h_iᵀ W h_j`, and ways to give it position and length. Two of them became 1b runs (`bilinear_form: dot`, and `bilinear_pos: rotary` on the full W; spec §4.1). Plan v1.5 §5 lists them.
+
+**What our head is:** the biaffine span scorer of Yu et al. (2020) below, `h_iᵀ W h_j + uᵀh_i + vᵀh_j`, plus a learned length bias `b[j − i]`.
+
+### How start and end interact
+
+**[Yu, Bohnet & Poesio (2020). Named Entity Recognition as Dependency Parsing. ACL.](https://arxiv.org/abs/2005.07150) (read, method)**
+- Two separate feed-forward layers make start and end vectors; the score is `h_sᵀ U h_e + W(h_s ⊕ h_e) + b`, one U per entity class, from Dozat & Manning's parser.
+- No width or length feature. Our head is this scorer with one class, plus `b[j − i]`.
+
+**Fajcik et al. (2021), §2 above (read, similarity functions).**
+- For the joint objective they compared dot product, weighted dot `wᵀ(h_s ∘ h_e)`, additive `wᵀ[h_s; h_e]`, additive plus weighted product, and an MLP `wᵀσ(W[h_s; h_e] + b)`.
+- For BERT and ALBERT they use the dot product of `W H + b` with `H`. Plain dot product worked best for BERT-type models.
+- Our `bilinear_form: dot` is this form on the head's 256-dimensional features, with rank 64.
+
+**[Seo et al. (2019). Real-Time Open-Domain Question Answering with Dense-Sparse Phrase Index (DenSPI). ACL.](https://arxiv.org/abs/1906.05807) (read, phrase representation and ablation)**
+- A phrase is `[a_i, b_j, c_ij]`: a start vector, an end vector and a "coherency" scalar `c_ij = h³_i · h⁴_j`, the dot product of two 32-dimensional slices of the start and end tokens. It scores how well the two ends form one phrase.
+- Removing the scalar cost 2.1 EM and 0.2 F1 on SQuAD v1.1 (73.6 → 71.5 EM).
+- Their encoder never sees the question (phrases are indexed once), so the start–end link has to come from this term; expect less in a reader that reads question and passage together.
+
+### Position and length in the pair term
+
+**[Su et al. (2022). Global Pointer: Novel Efficient Span-based Approach for Named Entity Recognition. arXiv 2208.03054.](https://arxiv.org/abs/2208.03054) (read, method and ablation)**
+- Score `q_iᵀ k_j` with `q = W_q h + b_q`, `k = W_k h + b_k`, and rotary position embedding on both: `(R_i q_i)ᵀ(R_j k_j) = q_iᵀ R_{j−i} k_j`, so the score depends on the distance j − i, in a way that depends on content. No scaling factor.
+- Without RoPE, F1 on CoNLL04 fell from 88.57 to 77.14. Their score has no other source of position, while ours has `b` and the encoder's own position signal, so expect a much smaller effect.
+- An "efficient" variant shares `q_iᵀ k_j` across entity types and adds a per-type linear term.
+- Our `bilinear_pos: rotary` applies it to the pair term's inputs. With the dot form it is this relative score. The 1b grid runs it on the full W instead (the user's choice, 2026-10-15): `(R_i h_i)ᵀ W (R_j h_j)` also depends on absolute position, because a general W doesn't commute with the rotations.
+
+**[Su et al. (2021). RoFormer: Enhanced Transformer with Rotary Position Embedding. arXiv 2104.09864.](https://arxiv.org/abs/2104.09864) (abstract)**
+- The source of RoPE: absolute positions encoded by rotation, so attention scores depend on relative positions.
+
+**Distance biases (not run; from memory, not re-checked here).**
+- T5's relative position bias (Raffel et al., 2020) learns one scalar per bucketed distance; our `b[j − i]` is the same idea without buckets.
+- [ALiBi (Press, Smith & Lewis, 2022)](https://arxiv.org/abs/2108.12409) uses a fixed linear penalty `−m · (j − i)`: one slope, strictly less flexible than `b`.
+- Caveat for all of them, `b` included: at the reader's shared learning rate (2e-5, about 2,500 steps per base epoch), AdamW moves each parameter by roughly the learning rate per step, so a small set of bias values can drift only about 0.025 in a run. A separate learning rate would be needed for them to learn anything.
+
+### Using the words inside the span
+
+**[Lee, He, Lewis & Zettlemoyer (2017). End-to-end Neural Coreference Resolution. EMNLP.](https://arxiv.org/abs/1707.07045) (read, span representation and ablation)**
+- Span representation `[x_start, x_end, x̂, φ(width)]`: the two boundary states, a "soft head" `x̂` (attention over the span's words, `a_t ∝ exp(w · ffnn(x_t))`) and a width embedding, scored by a feed-forward layer. The length effect then depends on content.
+- Removing the head attention cost 1.3 F1 on coreference; removing the distance and width features together cost 3.8.
+
+**[Toshniwal et al. (2020). A Cross-Task Analysis of Text Span Representations. RepL4NLP.](https://aclanthology.org/2020.repl4nlp-1.20) (read, definitions and conclusions)**
+- Compares average, attention and max pooling, endpoint `[e_i; e_j]`, diff-sum `[e_j + e_i; e_j − e_i]` and "coherent" (DenSPI's form) on six tasks with eight encoders.
+- With a frozen encoder the choice matters a lot (max pooling most robust). Fine-tuning "greatly reduces the impact of span representation choice on performance".
+- **What this means for us:** pooling over the span's words is a low priority for a fine-tuned reader.
+
+### What became 1b runs, and what did not
+
+- **Run:** `compound-dot` (Fajcik et al.'s dot product as a low-rank pair term) and `compound-rotary` (rotary encodings, as in GlobalPointer, but on the full W), next to the full W with and without additive encodings (`slurm/joint_head_tests.sh`).
+- **Not run:** the MLP pair scorer (Fajcik et al. found the dot product better for BERT-type models, and it costs as much as the conditional head), span pooling (small effect after fine-tuning), ALiBi and T5 biases (alternatives to `b`, whose problem is the learning rate, not its form).
+

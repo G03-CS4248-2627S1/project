@@ -2,7 +2,7 @@
 
 How each stage and experiment is carried out: where code goes, how work is split and reviewed, and when to open a pull request.
 
-- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.4). **How to build it:** [implementation_details.md](implementation_details.md). **When:** [timeline.md](timeline.md). **How we work:** this file.
+- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.5). **How to build it:** [implementation_details.md](implementation_details.md). **When:** [timeline.md](timeline.md). **How we work:** this file.
 - Humans and AI assistants follow the same rules. Assistants read this file with AGENTS.md before starting a task.
 - Change this file through a PR, like any other shared rule.
 
@@ -50,6 +50,7 @@ Planned modules, so two people don't build the same thing twice. Split a module 
 | `squadqa/verifier.py` | Marking, both variants, listwise loss | §5.3–5.4 | Stages 2–4 |
 | `squadqa/train_verifier.py` | Entry point: train a verifier from a config | §5 | Stage 3 |
 | `squadqa/report.py` | Tables and figures for the paper, built from `results/` | §6 | Stage 5 |
+| `squadqa/pool.py` | Task pools: share a grid of runs through a GitHub issue (§5.4) | — | Stage 2 |
 
 Entry points run from the repo root as `python -m squadqa.<module>`, with the config file, `--seed` and `--run-id` as arguments.
 
@@ -164,6 +165,22 @@ The owners of a stage open one PR by the Thursday milestone that:
 - updates the plan, spec or timeline if the design changed.
 
 Once it merges, the row's final runs start (§5.2), and later stages build on the frozen setting.
+
+### 5.4 Task pools: sharing a grid
+
+A grid of runs can be shared through one GitHub issue, so whoever has GPU time runs the next open task. `python -m squadqa.pool` does every step. Assistants follow AGENTS.md, "Task pools".
+
+- **Start every pool session by telling your assistant which issue holds the pool**, for example "run tasks from the pool in #44". It does nothing for a pool before that.
+- **The owner** (who runs the experiment) pushes the code, writes the tasks as JSON pinned to that commit (for 1b: `bash slurm/joint_head_tests.sh pool-json > pool.json`), and runs `python -m squadqa.pool publish <issue> pool.json`. The issue body then holds the tasks. Nobody edits that block by hand.
+- **Everyone, including the owner, runs pool tasks only through the tool:**
+  1. `python -m squadqa.pool status <issue> --jobs` shows each task as open, claimed, running or done. Your own are marked `*`; finish those first.
+  2. Put your checkout and cluster clone at the pool commit. `status` prints the commands. Every run in a pool comes from that one commit.
+  3. `python -m squadqa.pool claim <issue> -n 2` claims the next two open tasks and submits them; name tasks to pick particular ones, and add `--gpus h100-96` to use another GPU type.
+  4. When a job ends, `python -m squadqa.pool done <issue> <task>` fetches its results and commits them to the pool branch. It commits from a temporary worktree, so your checkout stays at the pool commit. It then posts the scores. If the job failed, `release <issue> <task> <reason>` reopens the task.
+- **How claims stay unique:** every command posts a comment that starts with `pool:`. The earliest claim on an open task wins, and a later one sees that it lost and moves on. So two people claiming at once is safe. Don't edit or delete these comments.
+- **Your own record:** your assistant notes each claimed task in `local/MEMORY.md` ("Task pools"), so a later session finishes your tasks before claiming more.
+- **Results:** `done` also moves the clone's copy of the run to `$SQUADQA_SCRATCH/fetched/`. A later checkout that contains the run then doesn't collide with untracked files. Once every task is done, the owner opens the results PR from the pool branch (§5.1 step 7).
+- **Pushing results needs write access** to the repository.
 
 ---
 

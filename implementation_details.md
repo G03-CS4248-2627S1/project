@@ -2,7 +2,7 @@
 
 Implementation spec for coding agents and team members.
 
-- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.4). **How:** this file. **When:** [timeline.md](timeline.md). **How we work:** [workflow.md](workflow.md).
+- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.5). **How:** this file. **When:** [timeline.md](timeline.md). **How we work:** [workflow.md](workflow.md).
 - Week labels such as W2 or W5+ are plan weeks: W1–W7 are course weeks 7–13.
 - If this file and the plan disagree, stop and ask a human.
 
@@ -31,10 +31,15 @@ max_seq_len: 384
 doc_stride: 128
 padding: dynamic                       # pad to longest in batch; batch by similar length
 max_answer_words: 30                   # L; every dev question has a reference of ≤ 28 words
-span_head: compound                    # compound (row 1+) = joint + auxiliary independent loss | joint (P2 ablation) | standard (row 0)
+span_head: compound                    # Fajcik et al. (2021) objectives: compound (row 1+; I+J) = joint + auxiliary independent loss | joint (J; P2 ablation) | conditional (JC; 1b test) | standard (I; row 0)
 aux_independent_weight: 1.0            # compound only (Fajcik et al., 2021)
 head_dim: 256
 W_init: zeros
+bilinear_form: full                    # joint and compound pair term (§4.1): full = h_iᵀ W h_j (biaffine) | dot = (A h_i)ᵀ(B h_j) of rank bilinear_rank (Fajcik et al.'s dot product; 1b test)
+bilinear_rank: 64                      # dot form only
+length_bias: true                      # joint and compound: learned bonus b[j − i] per span length, zero at init (§4.1)
+bilinear_pos: none                     # joint and compound, pair term only (§4.1; 1b tests): none | additive = sinusoidal encodings added to h_i, h_j | rotary = RoPE on the pair term's inputs (h_i, h_j for full; A h_i, B h_j for dot)
+no_answer: false                       # true = a null option, the span (CLS, CLS), in every softmax; never predicted (rule 5); 1b tests set it (§4.1)
 decode_topk: 10
 decode_rules: [map, mbr]               # always report both
 mbr_em_weight: 1.0                     # γ, the F1:EM decoding ratio: MBR utility F1 + γ·EM; 0 = expected F1
@@ -155,6 +160,19 @@ p(i, j) = softmax of s over all valid spans (flattened)
 ```
 - `W` and `b` start at zero, so the head starts as the standard start + end model.
 - Compute the full n × n word-level matrix and mask it. No band tricks are needed at these sizes.
+- **Head options** (joint and compound; milestone 1b tests them; the survey behind them is in `literature_review.md` §8):
+  - **Pair term** (`bilinear_form`): `full` is `h_iᵀ W h_j`, the biaffine scorer of Yu et al. (2020). `dot` is `(A h_i)ᵀ(B h_j)` with A and B of rank `bilinear_rank` (64): the dot product of projections that Fajcik et al. found best for BERT-type models, as a low-rank W. B starts at zero and A at random, so the pair term starts at zero and both factors get gradients; two zero factors would never move.
+  - `length_bias: false` drops `b`.
+  - **Positions in the pair term** (`bilinear_pos`), never in `u` and `v`:
+    - `additive`: sinusoidal encodings (Vaswani et al., 2017) of each word's index in the passage, added to `h_i` and `h_j` right before the pair term: `(h_i + PE(i))ᵀ W (h_j + PE(j))`. The product has terms in both the distance and the absolute positions.
+    - `rotary`: RoPE (Su et al., RoFormer) on the pair term's inputs, rotating each by its word's position.
+      - Dot form, as in GlobalPointer (Su et al., 2022): `(R_i A h_i)ᵀ(R_j B h_j) = (A h_i)ᵀ R_{j−i} (B h_j)` depends only on the distance, in a way that depends on content.
+      - Full form (the 1b run `compound-rotary`): `(R_i h_i)ᵀ W (R_j h_j)`. A general W doesn't commute with the rotations, so the score depends on both positions, not only on their distance.
+    - Without them the pair term sees position only as far as the encoder states carry it implicitly. The passage index, not the window's, gives a span the same encodings in every window. The pair term starts at zero, so they change nothing at init and the head still starts as the standard model.
+- **No-answer option** (`no_answer: true`; every 1b test sets it): the span (CLS, CLS) joins every softmax as a null, as in Fajcik et al.'s and BERT's SQuAD 2.0 models. Joint score: the pair term of `(h_c, h'_c)` plus `uᵀh_c + vᵀh'_c`, with `h_c = MLP_start(x[CLS])`, `h'_c = MLP_end(x[CLS])` and no length or position terms.
+  - Each window has its own null. A question's no-answer probability is the sum over its windows, which treat them like copies of the gold (§3.4).
+  - On SQuAD v1.1 no question targets it, so training only pushes it down. Decoding never returns it (rule 5, §4.4).
+  - It gets a positive target only if a reader trains on unanswerable questions. That is not built: row 5 gives them to the verifier only (§5.1).
 
 ### 4.2 Reference code
 ```python
@@ -234,6 +252,20 @@ risk = (logp.exp() * torch.where(valid, f1_loss, torch.zeros_like(f1_loss))).sum
 - This term always uses one-hot targets. The F1-weighted target (row 2) and the risk term apply to the joint term only.
 - Decoding uses the joint scores s(i, j).
 
+**The four objectives of Fajcik et al. (2021)**, chosen by `span_head` (their names in brackets; 1b compares them on base):
+
+| `span_head` | Loss | Decoding score s(i, j) |
+|---|---|---|
+| `standard` (I) | −log p_start(i*) − log p_end(j*) | uᵀh_i + vᵀh_j |
+| `conditional` (JC) | −log p_start(i*) − log p(j* \| i*) | uᵀh_i + log p(j \| i) |
+| `joint` (J) | −log p(y*) | the joint score (§4.1) |
+| `compound` (I+J) | −log p(y*) + ω · (−log p_start(i*) − log p_end(j*)) | the joint score (§4.1) |
+
+- **Conditional end:** `p(j | i)` is the softmax over the valid ends of start i of `wᵀ tanh(A x[last_tok[j]] + B x[first_tok[i]] + c)`. This is Fajcik et al.'s form (checked 2026-10-15 against arXiv 2008.12804v4), with `head_dim` hidden units instead of d_model.
+  - Training conditions on the gold start (teacher forcing). With several windows, each window that holds the answer conditions on its own copy of i*, and their end logits share one softmax (§3.4).
+  - Decoding scores every valid span exactly, so the question's softmax is p(i) · p(j | i). Fajcik et al. used a top-10 × top-10 beam instead.
+- **With the no-answer option:** the start and end softmaxes of `standard`, and of compound's auxiliary term, get the null's start and end logits `uᵀh_c` and `vᵀh'_c`. The conditional start softmax gets `uᵀh_c`, and its only end is CLS. The joint softmax gets `s_null`.
+
 ### 4.4 Decoding
 - `topk` over flattened scores (k = 10) → (i, j) → characters `(word_start[i], word_end[j])` → answer = `context[a:b]`.
 - **Group boundary variants** (`mbr_utility: normalized`, the default): spans that cover the same content words at the same positions (§4.3; "the Eiffel Tower" and "Eiffel Tower") are one answer, so add up their probabilities. The same text elsewhere in the passage stays a separate answer (rule 4).
@@ -243,6 +275,9 @@ risk = (logp.exp() * torch.where(valid, f1_loss, torch.zeros_like(f1_loss))).sum
   - With `positional` (an E1 row), F1 is positional word F1 and EM(y, y') = 1 if the spans are identical.
   - γ = `mbr_em_weight` (the proposal's F1:EM ratio), tuned on the validation split. γ = 0 is expected F1; a large γ approaches MAP.
 - **Calibration:** fit one temperature T on the validation split (minimize the NLL of the gold span). Questions whose answer is not a valid span (not word-aligned, or over 30 words) are left out of the fit and counted in `calibration.json`.
+- **No-answer option:** the null stays in the softmax, for calibration and for every span's probability (`squadqa.decode.span_logp`). MAP and MBR still choose among spans only, because the predictions file needs a non-empty answer for every question (rule 5).
+  - MBR's choice doesn't change: every answer scores 0 against "no answer", so the null adds the same 0 to each candidate's expected utility.
+  - `metrics.json` reports how much mass the null takes (`no_answer_<split>`).
 
 ### 4.5 Diagnostics
 - **Cross-span mass** (plan E3; also the W2 early check on the joint head; `squadqa/diagnostics.py`):
@@ -250,7 +285,7 @@ risk = (logp.exp() * torch.where(valid, f1_loss, torch.zeros_like(f1_loss))).sum
   2. The cross span is c = (i1, j2), if valid; without one the ratio below is 0.
   3. Report p(c) / (p(a) + p(b) + p(c)), with p calibrated (the run's temperature), bucketed by top-1 probability (< 0.5, 0.5–0.9, > 0.9), for the standard and joint heads.
   4. Also count how often each decision rule answers with the cross span (under `mbr_utility: normalized`, a boundary variant of it counts), with the official scores of those answers. This shows whether cross spans cause errors (plan §5: expected-F1 decoding favours them).
-- **Equivalence test:** with W = 0 and b = 0, the joint head's argmax must equal the argmax over valid (i, j) of `u·h_i + v·h_j`.
+- **Equivalence test:** with W = 0 and b = 0, the joint head's argmax must equal the argmax over valid (i, j) of `u·h_i + v·h_j`, for every `bilinear_form` and `bilinear_pos` (`tests/test_heads.py`).
 
 ---
 

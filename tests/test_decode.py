@@ -97,6 +97,25 @@ def test_combine_takes_the_most_central_window():
     assert got == pytest.approx({(0, 0): 0.5, (2, 3): 1.0, (3, 3): 0.7, (5, 5): 0.1})
 
 
+def test_combine_sums_the_window_nulls():
+    a = np.full((2, 2), -np.inf); a[0, 0] = 1.0
+    b = np.full((2, 2), -np.inf); b[1, 1] = 2.0
+    spans = Dc.combine_windows([window(a, 0, [3, 4], 3, 4), window(b, 5, [3, 4], 3, 4)], 30, [0.5, -1.0])
+    assert spans.null == pytest.approx(float(np.log(np.exp(0.5) + np.exp(-1.0))))
+    assert Dc.combine_windows([window(a, 0, [3, 4], 3, 4)], 30).null is None
+
+
+def test_null_joins_the_softmax_but_is_never_a_candidate():
+    spans = Dc.SpanScores(np.array([0, 1]), np.array([0, 1]), np.array([1.0, 2.0], dtype=np.float32), null=0.5)
+    z = np.array([1.0, 2.0, 0.5])
+    logp, null = Dc.span_logp(spans, 2.0)
+    assert np.exp(logp) == pytest.approx(np.exp(z[:2] / 2) / np.exp(z / 2).sum())
+    assert np.exp(null) == pytest.approx(np.exp(0.25) / np.exp(z / 2).sum())
+    c = Dc.top_k(spans, 5)
+    assert c.starts.tolist() == [1, 0] and np.exp(c.logp).sum() == pytest.approx(1 - np.exp(0.5) / np.exp(z).sum())
+    assert Dc.span_logp(Dc.SpanScores(spans.starts, spans.ends, spans.scores))[1] is None
+
+
 def test_combine_drops_invalid_spans():
     s = np.zeros((40, 40))
     spans = Dc.combine_windows([window(s, 0, np.arange(40) + 3, 3, 42)], 30)

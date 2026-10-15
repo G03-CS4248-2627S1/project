@@ -1,7 +1,8 @@
 """Run a reader over a set of questions and write its predictions (spec §3.4, §4.4).
 
 The reader is any score_fn(batch) -> (W, n, n) tensor of span scores, -inf where a span is
-invalid, for a batch from squadqa.data.collate (reader_score_fn wraps a squadqa.heads.Reader).
+invalid, for a batch from squadqa.data.collate, or a (span scores, (W,) null scores) pair for a
+reader with a no-answer option (reader_score_fn wraps a squadqa.heads.Reader).
 
 From a trained run's checkpoint (squadqa.train_reader writes the validation outputs itself):
     python -m squadqa.predict --run-id <run_id>                          # validation again
@@ -17,7 +18,8 @@ Files in results/<run_id>/, for split = validation (or a final-scoring set):
     predictions_<split>_<rule>.json     {question_id: answer}, one per rule in decode_rules
     candidates_<split>.json             {question_id: [[start_word, end_word, logp], ...]}, top-k
     calibration.json                    the fitted temperature and the NLL before and after
-    metrics.json                        {split: {rule: official scores}, ...}, updated per split
+    metrics.json                        {split: {rule: official scores}, ...}, updated per split;
+                                        with a no-answer option also no_answer_<split> (no_answer_summary)
 """
 
 import argparse
@@ -31,7 +33,7 @@ from squadqa import evaluate as E
 from squadqa.config import RESULTS, env, write_json
 from squadqa.data import Features, collate, featurize, load_split, load_squad, load_tokenizer
 from squadqa.decode import (SpanScores, answer_text, combine_windows, content_flags, decode,
-                            fit_temperature, temperature_nll, top_k)
+                            fit_temperature, span_logp, temperature_nll, top_k)
 
 
 def score_questions(score_fn, feats: Features, pad_id: int, max_answer_words: int,
@@ -47,28 +49,49 @@ def score_questions(score_fn, feats: Features, pad_id: int, max_answer_words: in
         rows = feats.batch(ids)
         batch = {k: v.to(device) for k, v in collate(rows, pad_id).items()}
         with torch.no_grad():
-            scores = score_fn(batch).float().cpu().numpy()
+            scored = score_fn(batch)
+        scores, null = scored if isinstance(scored, tuple) else (scored, None)
+        scores = scores.float().cpu().numpy()
+        null = None if null is None else null.float().cpu().numpy()
         per_example: dict[int, list] = {}
+        nulls: dict[int, list[float]] = {}
         for r, (pos, w) in enumerate(rows):
             per_example.setdefault(pos, []).append(
                 (scores[r], w.first_word, w.first_tok, w.last_tok, w.ctx_start, w.ctx_end))
+            if null is not None:
+                nulls.setdefault(pos, []).append(float(null[r]))
         for pos, windows in per_example.items():
-            out[ids[pos]] = combine_windows(windows, max_answer_words)
+            out[ids[pos]] = combine_windows(windows, max_answer_words, nulls.get(pos))
     return out
 
 
 def calibrate(feats: Features, spans: list[SpanScores]) -> dict:
     """Fit the temperature on these questions (the validation split) against each question's
     annotated answer. Questions whose answer is not a valid span (not word-aligned or too long)
-    are left out and counted."""
+    are left out and counted. A no-answer option stays in the softmax being fitted."""
     items = []
     for ex, s in zip(feats.examples, spans):
         g = s.index(ex.gold)
         if g is not None:
-            items.append((s.scores, g))
+            items.append((s.with_null(), g))
     t = fit_temperature(items)
     return {"temperature": t, "nll_at_1": temperature_nll(items, 1.0), "nll": temperature_nll(items, t),
             "questions": len(items), "left_out": len(spans) - len(items)}
+
+
+def no_answer_summary(spans: list[SpanScores], temperature: float) -> dict | None:
+    """How much probability the no-answer option takes at temperature T: its mean, median and
+    maximum, and the share of questions where it is over 0.5 or above the most probable span
+    (where a reader allowed to abstain would). None for a reader without the option."""
+    if not spans or spans[0].null is None:
+        return None
+    rows = []
+    for s in spans:
+        logp, null = span_logp(s, temperature)
+        rows.append((np.exp(null), np.exp(logp.max())))
+    p, top = np.array(rows).T
+    return {"questions": len(p), "mean_p": float(p.mean()), "median_p": float(np.median(p)), "max_p": float(p.max()),
+            "share_over_0.5": float((p > 0.5).mean()), "share_above_top_span": float((p > top).mean())}
 
 
 def decode_questions(feats: Features, spans: list[SpanScores], cfg: dict,
@@ -128,6 +151,9 @@ def predict_split(model, tok, cfg: dict, run_dir: Path, device: str, split: str,
     out = {split: {rule: E.metrics(split, dataset, p) for rule, p in preds.items()}}
     if cal:
         out["calibration"] = cal
+    no_answer = no_answer_summary(spans, t)
+    if no_answer is not None:
+        out[f"no_answer_{split}"] = no_answer
     return out
 
 
@@ -142,16 +168,28 @@ def eval_questions(name: str):
     return load_split("validation") if name == "validation" else load_squad(E.FINAL_SETS[name])
 
 
-def load_reader(run_id: str, device: str):
-    """A trained run's resolved config, tokenizer and reader with its checkpoint loaded, and the
-    checkpoint's step."""
-    import yaml
+# Config keys added after some runs were trained, with the values that reproduce how those runs
+# were trained (the row-0 runs have none of them).
+ADDED_KEYS = {"f1_target_weight": 0.0, "risk_weight": 0.0, "no_answer": False, "length_bias": True,
+              "bilinear_form": "full", "bilinear_rank": 64, "bilinear_pos": "none"}
 
-    from squadqa.heads import Reader
-    from squadqa.train_reader import CHECKPOINT, load_checkpoint, load_encoder
+
+def run_config(run_id: str) -> dict:
+    """A trained run's resolved config, with ADDED_KEYS filled in where the run predates them."""
+    import yaml
 
     with open(RESULTS / run_id / "config.yaml", encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
+    return {**ADDED_KEYS, **cfg}
+
+
+def load_reader(run_id: str, device: str):
+    """A trained run's resolved config, tokenizer and reader with its checkpoint loaded, and the
+    checkpoint's step."""
+    from squadqa.heads import Reader
+    from squadqa.train_reader import CHECKPOINT, load_checkpoint, load_encoder
+
+    cfg = run_config(run_id)
     tok = load_tokenizer(cfg["model"])
     model = Reader(load_encoder(cfg["model"]), cfg).to(device)
     step = load_checkpoint(Path(env("SQUADQA_SCRATCH")) / "runs" / run_id / CHECKPOINT, model)
