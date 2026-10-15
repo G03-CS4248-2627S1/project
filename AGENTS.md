@@ -23,6 +23,21 @@ Each teammate has a gitignored `local/` folder. Its `local/MEMORY.md` holds what
 
 workflow.md has the full version: issues, when to open a PR, review, and how experiments move from config to committed results (§5).
 
+## Task pools
+
+A grid of runs can be shared through a GitHub issue that holds a task pool, so teammates with GPU time run its open tasks (workflow.md §5.4). `python -m squadqa.pool` does every step, and the issue's comments are the log of who runs what.
+
+- **The user names the pool issue first.** A pool session starts with the user pointing the assistant at the issue, for example "run tasks from the pool in #44". Until then, don't claim, submit or post anything for a pool, even one you know about.
+- **Then, in this order:**
+  1. Read the "Task pools" section of `local/MEMORY.md`, and add the section if it's missing. It lists the tasks this user holds, with their job ids.
+  2. Run `python -m squadqa.pool status <issue> --jobs`. Rows marked `*` are this user's. It also says if the checkout isn't at the pool commit.
+  3. Finish this user's tasks before claiming new ones: `done <issue> <task>` for a finished job, `release <issue> <task> <reason>` for a failed one.
+  4. Put the checkout and the cluster clone at the pool commit; `status` prints the commands. Not while this user's jobs are queued ("Submitting jobs", step 3).
+  5. Ask the user before claiming, because `claim` submits GPU jobs. Name the tasks, the GPU and the time limit.
+  6. Right after `claim`, record each task in `local/MEMORY.md`: issue, task, job id, date. Update the entry after `done` or `release`.
+- **Never run a pool task any other way.** Submitting it with `soc.sh submit` or a grid script skips the log, so someone else may run it too. The pool owner follows the same rule.
+- **If `claim` says someone claimed a task first, leave it.** Don't edit or delete pool comments or the pool block.
+
 ## Spec documents
 
 - **[implementation_details.md](implementation_details.md)** says *how* to build the system: hard rules, config defaults, data splits, the definition of a word, the joint span head, the verifier, and the testing workflow for custom attention code. **Read it before writing any data, model or evaluation code.** Its §1 hard rules are binding.
@@ -84,6 +99,7 @@ workflow.md has the full version: issues, when to open a PR, review, and how exp
        - If `SOC_MAIL_TYPE` is set in the local `.env` (for example `END,FAIL`), Slurm emails `<soc unix id>@comp.nus.edu.sg`. Delivery hasn't been confirmed yet.
        - Before a GPU type's first use, run the smoke test on it. H100 and H200 haven't been tested yet.
     5. **Watch and collect.** `soc.sh jobs` shows the queue, `soc.sh log <job name>-<job id>.out` copies a log, and `soc.sh fetch <run_id>` copies results. To change a pending job, see SKILL.md.
+       - Tasks from a pool issue are submitted and collected with `python -m squadqa.pool` instead ("Task pools" above).
     6. **Runs longer than 3 hours** must checkpoint and resume (spec rule 8). Queue the resume behind the running job: `soc.sh submit --dependency=afterany:<job id> --export=ALL,RUN_ID=<run id> slurm/<name>.sbatch`. Ask the team before using `gpu-long` (up to 3 days), because the spec assumes 3-hour jobs.
   - **Cluster limits** (checked September 2026; details in `.claude/skills/soc-cluster/SKILL.md`):
     - The login node allows 1 GB of virtual memory and 300 s of CPU time per process and has a tiny `/tmp` quota. Build environments and run Python in jobs, not on the login node.

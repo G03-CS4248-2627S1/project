@@ -22,6 +22,11 @@ This file is gitignored, so only you and your AI assistant see it. The assistant
 ## Mistakes and lessons
 <!-- The assistant's own mistakes, newest first, dated, each with its lesson. Ones a teammate could repeat also go in AGENTS.md, "Lessons from past mistakes". -->
 
+## Task pools
+<!-- Pool tasks this user holds (AGENTS.md, "Task pools"), one line each, added right after claim:
+     - #<issue> <task>: job <id>, claimed <date>; then "done <date>, run <run id>" or "released <date>: <reason>".
+     Read this before claiming anything; finish unfinished entries first. -->
+
 ## Personal skills
 <!-- Procedures you repeat, with your own values filled in. Only commands that have worked. -->
 

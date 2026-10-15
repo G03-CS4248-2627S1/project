@@ -12,6 +12,7 @@
 #   bash slurm/joint_head_tests.sh list                  # the runs, and the commands each would submit
 #   bash slurm/joint_head_tests.sh smoke                 # new heads first (spec §9): stop at 30, resume, predict
 #   bash slurm/joint_head_tests.sh grid [name ...]       # the comparison runs: all, or the named ones
+#   bash slurm/joint_head_tests.sh pool-json             # the same runs as a task pool for teammates (workflow.md §5.4)
 #   bash slurm/joint_head_tests.sh e3 <run_id> ...       # cross-span diagnostic (plan E3) of finished runs
 #   bash slurm/joint_head_tests.sh summary               # table of the fetched runs (soc.sh fetch <run_id> first)
 #
@@ -87,6 +88,21 @@ case "${1:-}" in
       id=$(submit --time="$TIME" --export=ALL,EXPERIMENT="$exp"${tag:+,TAG=$tag} -- "${args[@]}")
       echo "$name: job $id, run id $(date +%F)-$exp${tag:+-$tag}-s0-j$id"
     done ;;
+  pool-json)
+    # The grid as a task pool (workflow.md §5.4), pinned to this checkout's commit:
+    #   bash slurm/joint_head_tests.sh pool-json > pool.json && python -m squadqa.pool publish <issue> pool.json
+    printf '{"pool": 1, "branch": "%s", "commit": "%s", "script": "slurm/train_reader.sbatch",\n' \
+      "$(git branch --show-current)" "$(git rev-parse HEAD)"
+    printf ' "sbatch": ["--gpus=%s", "--time=%s"], "tasks": {\n' "$GPUS" "$TIME"
+    n=${#RUNS[@]}; k=0
+    for r in "${RUNS[@]}"; do
+      k=$((k + 1)); tag=$(field "$r" 3)
+      read -ra args <<<"$(field "$r" 4)"
+      if [ ${#args[@]} -eq 0 ]; then args_json="[]"; else args_json=$(printf '"%s", ' "${args[@]}"); args_json="[${args_json%, }]"; fi
+      printf '  "%s": {"export": {"EXPERIMENT": "%s"%s}, "args": %s}%s\n' "$(field "$r" 1)" "$(field "$r" 2)" \
+        "${tag:+, \"TAG\": \"$tag\"}" "$args_json" "$([ "$k" -lt "$n" ] && echo ,)"
+    done
+    printf '}}\n' ;;
   e3)
     shift
     [ $# -gt 0 ] || { echo "usage: joint_head_tests.sh e3 <run_id> ..." >&2; exit 1; }
