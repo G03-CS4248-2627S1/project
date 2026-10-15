@@ -1,0 +1,13 @@
+{
+  "torch": "2.14.0+cu126",
+  "cuda": "12.6",
+  "gpu": "NVIDIA H200 NVL",
+  "capability": [
+    9,
+    0
+  ],
+  "bf16_matmul_mean": 25.53174591064453,
+  "transformers": "5.17.0",
+  "peft": "0.21.2",
+  "scipy": "1.18.1"
+}
