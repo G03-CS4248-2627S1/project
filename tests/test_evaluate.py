@@ -37,6 +37,39 @@ def test_per_question_takes_max_over_gold_answers():
     assert f1["q3"] == pytest.approx(2 / 3)
 
 
+# Unnormalized scoring: the official code without normalize_answer (a diagnostic).
+
+@pytest.mark.parametrize("gold, pred, official, raw", [
+    ("Paris", "Paris", (1, 1.0), (1, 1.0)),
+    ("Paris", "paris", (1, 1.0), (0, 0.0)),                      # case
+    ("the Eiffel Tower", "Eiffel Tower", (1, 1.0), (0, 0.8)),    # article: 2 of 3 whitespace tokens
+    ("Paris", "Paris.", (1, 1.0), (0, 0.0)),                     # punctuation stays on the token
+    ("the cat", "the dog", (0, 0.0), (0, 0.5)),                  # raw F1 can be higher: "the" now counts
+])
+def test_unnormalized_scoring_drops_only_the_normalization(gold, pred, official, raw):
+    data = make_dataset([("q", [gold])])
+    for normalize, (em, f1) in [(True, official), (False, raw)]:
+        exact, f = E.per_question(data, {"q": pred}, normalize)
+        assert exact["q"] == em and f["q"] == pytest.approx(f1)
+
+
+def test_the_official_scorer_still_normalizes():
+    E.per_question(TINY, TINY_PREDS, normalize=False)
+    assert E.scorer() is not E.raw_scorer()
+    assert E.scorer().normalize_answer("The Cat.") == "cat"
+    assert E.raw_scorer().normalize_answer("The Cat.") == "The Cat."
+    assert E.per_question(TINY, TINY_PREDS)[0] == {"q1": 1.0, "q2": 1.0, "q3": 0.0}
+
+
+def test_unnormalized_metrics_say_so_and_take_max_over_golds():
+    out = E.metrics("validation", TINY, TINY_PREDS, normalize=False)
+    assert out["normalized"] is False and out["exact"] == 0.0
+    assert out["f1"] == pytest.approx(100 * (0.8 + 0.0 + 2 / 3) / 3)   # "Paris," and "France" are 2 tokens
+    assert "normalized" not in E.metrics("validation", TINY, TINY_PREDS)
+    exact, _ = E.per_question(make_dataset([("q", ["Paris, France", "France"])]), {"q": "France"}, False)
+    assert exact == {"q": 1.0}
+
+
 @pytest.mark.parametrize("preds, problem", [
     ({"q1": "a", "q2": "b"}, "1 missing"),
     ({**TINY_PREDS, "q9": "x"}, "not in the dataset"),
@@ -176,3 +209,6 @@ def test_command_line_writes_metrics(tmp_path):
     assert json.loads(out.read_text())["f1"] == 100.0
     E.main(["validation", str(pred), "--compare", str(pred), "--resamples", "50", "-o", str(out)])
     assert json.loads(out.read_text())["f1"]["ci95"] == [0.0, 0.0]
+    E.main(["validation", str(pred), "--no-normalize", "-o", str(out)])
+    result = json.loads(out.read_text())
+    assert result["normalized"] is False and result["exact"] == 100.0     # the gold strings themselves
