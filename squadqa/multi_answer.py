@@ -21,8 +21,12 @@ Build steps (the counts at each step go to summary.json):
 5. Split by passage: HELDOUT_FRAC held out, seed 0.
 
 Outputs in data/external/multi_answer/, SQuAD format, ASCII (json.dump's default):
-- train.json: each question once per answer, as an ordinary one-answer question (id <qid>_a<k>), so
-  the answer frequencies equal q. Training stays plain cross-entropy.
+- train.json: each question once per answer, as an ordinary one-answer question (id <qid>_a<k>) with
+  "weight": q(answer). Training weights each copy's loss by it, so every question totals 1 and the
+  objective is soft-label cross-entropy against q. Without the weight, a question with k answers
+  would count k times; sampling one answer per question each epoch optimizes the same expected
+  objective (Gheibi & Ghazizadeh, 2026) but needs several epochs. Loaders that ignore the key
+  (squadqa.data.load_squad) see plain one-answer questions.
 - heldout.json: each held-out question once, with all its answers (the scorer's multi-reference format).
 - q.json: {question id: {"split": ..., "answers": [[answer_start, text, probability], ...]}}, the known q.
 - summary.json: the counts.
@@ -151,8 +155,8 @@ def build(records, dev_contexts: list[str], max_answer_words: int, heldout_frac:
                 raise ValueError(f"question id {qid} appears twice")
             q[qid] = {"split": split, "answers": [[s, t, 1 / len(answers)] for s, t in answers]}
             if split == "train":
-                out_qas += [{"id": f"{qid}_a{a}", "question": question, "answers": [{"text": t, "answer_start": s}]}
-                            for a, (s, t) in enumerate(answers)]
+                out_qas += [{"id": f"{qid}_a{a}", "question": question, "weight": 1 / len(answers),
+                             "answers": [{"text": t, "answer_start": s}]} for a, (s, t) in enumerate(answers)]
             else:
                 out_qas.append({"id": qid, "question": question,
                                 "answers": [{"text": t, "answer_start": s} for s, t in answers]})

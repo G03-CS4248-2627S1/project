@@ -54,6 +54,7 @@ def test_train_has_one_copy_per_answer_and_heldout_keeps_them_all():
     for article in train:
         p = article["paragraphs"][0]
         assert [len(qa["answers"]) for qa in p["qas"]] == [1, 1, 1]
+        assert sum(qa["weight"] for qa in p["qas"]) == pytest.approx(1.0)       # each question totals 1
         for qa in p["qas"]:
             a = qa["answers"][0]
             assert p["context"][a["answer_start"]:a["answer_start"] + len(a["text"])] == a["text"]
