@@ -138,6 +138,20 @@ def test_fit_temperature_recovers_the_true_temperature():
     assert Dc.temperature_nll(items, t) <= Dc.temperature_nll(items, 1.0)
 
 
+def test_temperature_nll_of_a_group_is_its_summed_probability():
+    s = np.array([1.0, 0.5, -2.0, 0.0])
+    p = np.exp(Dc.log_softmax(s, 2.0))
+    assert Dc.temperature_nll([(s, np.array([0, 2]))], 2.0) == pytest.approx(-np.log(p[0] + p[2]))
+    assert Dc.temperature_nll([(s, 1)], 2.0) == pytest.approx(-np.log(p[1]))
+
+
+def test_group_members_are_the_boundary_variants():
+    f = flags_of("Visit the Eiffel Tower . Big Ben")
+    starts, ends = np.array([1, 2, 2, 5, 1]), np.array([3, 3, 4, 6, 1])        # ...; "the" alone
+    assert Dc.group_members(f, starts, ends, (2, 3)).tolist() == [0, 1, 2]
+    assert Dc.group_members(f, starts, ends, (1, 1)).tolist() == [4]           # no content word: itself only
+
+
 def test_fit_temperature_raises_at_the_edge():
     items = [(np.array([10.0, 0.0, 0.0]), 1)] * 10          # never right: T runs to the upper end
     with pytest.raises(RuntimeError, match="edge"):

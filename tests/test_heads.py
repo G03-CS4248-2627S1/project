@@ -169,6 +169,63 @@ def test_joint_nll_is_one_softmax_over_every_window_span_and_null():
     assert float(H.joint_nll({"span": span}, batch, 1)) == pytest.approx(float(torch.logsumexp(spans, 0) - gold))
 
 
+# target_unit group: -log p(G*), the gold's group of boundary variants.
+
+# Passage words: the Eiffel Tower . is tall; content words: Eiffel Tower is tall. Gold "the Eiffel Tower" = (0, 2),
+# content core (1, 2). Window 0 holds words 0-3; window 1 holds words 1-4, so it cuts off the gold's "the".
+PASSAGE_CONTENT = [False, True, True, False, True, True]
+
+
+def group_batch():
+    content = torch.tensor([PASSAGE_CONTENT[0:4], PASSAGE_CONTENT[1:5]])
+    return {"content": content, "core_start": torch.tensor([1, 0]), "core_end": torch.tensor([2, 1]),
+            "gold_start": torch.tensor([0, -1]), "gold_end": torch.tensor([2, -1]), "example": torch.tensor([0, 0])}
+
+
+def group_scores(seed=0):
+    g = torch.Generator().manual_seed(seed)
+    return H.valid_spans(torch.randn(2, 4, 4, generator=g), torch.ones(2, 4, dtype=torch.bool), 3)
+
+
+def test_gold_group_finds_every_boundary_variant_in_every_window():
+    from squadqa.decode import group_members
+    member = H.gold_group(group_scores(), group_batch())
+    found = {(w, i, j) for w, i, j in torch.nonzero(member).tolist()}
+    # Window 0: "the Eiffel Tower", "Eiffel Tower", "Eiffel Tower ." ("the Eiffel Tower ." is 4 words, over the limit).
+    # Window 1, which does not hold the whole gold: "Eiffel Tower" and "Eiffel Tower ." again.
+    assert found == {(0, 0, 2), (0, 1, 2), (0, 1, 3), (1, 0, 1), (1, 0, 2)}
+    starts, ends = zip(*[(i, j) for i in range(6) for j in range(i, min(i + 3, 6))])
+    flags = np.array(PASSAGE_CONTENT)
+    by_numpy = {(starts[k], ends[k]) for k in group_members(flags, np.array(starts), np.array(ends), (0, 2))}
+    assert by_numpy == {(i + w, j + w) for w, i, j in found}          # window w starts at passage word w
+
+
+def test_group_nll_sums_the_group_over_every_window_and_keeps_the_null():
+    span, batch = group_scores(), group_batch()
+    null = torch.tensor([0.3, -0.2])
+    nll = H.group_nll({"span": span, "null": null}, batch, 1)
+    members = span[H.gold_group(span, batch)]
+    everything = torch.cat([span[torch.isfinite(span)], null])
+    assert float(nll) == pytest.approx(float(torch.logsumexp(everything, 0) - torch.logsumexp(members, 0)), abs=1e-6)
+    assert float(nll) < float(H.joint_nll({"span": span, "null": null}, batch, 1))     # the group holds the gold
+
+
+def test_group_nll_is_joint_nll_when_the_gold_has_no_variant():
+    span, batch = group_scores(1), group_batch()
+    batch.update(content=torch.ones(2, 4, dtype=torch.bool), core_start=torch.tensor([0, -1]),
+                 core_end=torch.tensor([2, -1]))                       # every word a content word: no variants
+    out = {"span": span}
+    assert float(H.group_nll(out, batch, 1)) == pytest.approx(float(H.joint_nll(out, batch, 1)), abs=1e-6)
+
+
+def test_a_gold_without_content_words_is_its_own_group():
+    span = H.valid_spans(torch.zeros(1, 3, 3), torch.ones(1, 3, dtype=torch.bool), 3)
+    batch = {"content": torch.tensor([[False, False, True]]), "core_start": torch.tensor([-1]),
+             "core_end": torch.tensor([-1]), "gold_start": torch.tensor([0]), "gold_end": torch.tensor([0]),
+             "example": torch.tensor([0])}
+    assert torch.nonzero(H.gold_group(span, batch)).tolist() == [[0, 0, 0]]
+
+
 def test_independent_nll_puts_the_null_in_both_softmaxes():
     out = {"start": torch.tensor([[1.0, 0.0, INF]]), "end": torch.tensor([[0.5, 2.0, INF]]),
            "start_null": torch.tensor([0.3]), "end_null": torch.tensor([-1.0])}
@@ -240,6 +297,10 @@ def test_conditional_loss_uses_only_windows_holding_the_answer():
     (["risk_weight=0.1", "risk_em_weight=1.0"], NotImplementedError),
     (["risk_em_weight=1.0"], ValueError),                       # an EM weight for a risk loss that is off
     (["risk_weight=0.1", "risk_em_weight=-1.0"], ValueError),
+    (["target_unit=answer"], ValueError),
+    (["span_head=compound", "target_unit=group", "f1_target_weight=0.3"], NotImplementedError),   # F1 part: 1a
+    (["span_head=joint", "target_unit=group", "f1_target=positional"], ValueError),   # no variants to pool
+    (["span_head=standard", "target_unit=group"], ValueError),                        # no span softmax
     (["W_init=random"], NotImplementedError),
 ])
 def test_settings_that_are_not_built_or_do_not_apply_raise(overrides, error):
@@ -262,6 +323,7 @@ HEAD_CONFIGS = {
     "joint": ["span_head=joint", "length_bias=false", "bilinear_pos=additive"],
     "compound": ["span_head=compound", "bilinear_pos=additive"],
     "compound-rotary": ["span_head=compound", "bilinear_pos=rotary"],
+    "joint-group": ["span_head=joint", "length_bias=false", "target_unit=group"],
 }
 
 
@@ -329,6 +391,48 @@ def test_calibration_keeps_the_null_in_the_softmax():
     items = [(s.with_null(), ex.gold[0]) for ex, s in zip(examples, spans)]
     assert cal["nll_at_1"] == pytest.approx(temperature_nll(items, 1.0))
     assert cal["nll"] == pytest.approx(temperature_nll(items, cal["temperature"]))
+
+
+def test_calibration_under_group_fits_the_gold_groups_probability():
+    from types import SimpleNamespace
+
+    from squadqa.decode import SpanScores, group_members, log_softmax, temperature_nll
+    text = "Visit the Eiffel Tower . Big Ben"                 # words: Visit the Eiffel Tower . Big Ben
+    words = D.word_spans(text)
+    starts, ends = np.array([1, 2, 2, 5, 0]), np.array([3, 3, 4, 6, 0])    # 3 variants of "Eiffel Tower"; Big Ben; Visit
+    rng = np.random.default_rng(0)
+    spans, examples = [], []
+    for _ in range(200):
+        s = SpanScores(starts, ends, (3 * rng.normal(size=5)).astype(np.float32))
+        k = int(rng.choice(5, p=np.exp(log_softmax(s.scores, 1.5))))
+        spans.append(s)
+        examples.append(SimpleNamespace(gold=(int(starts[k]), int(ends[k])), question=SimpleNamespace(context=text),
+                                        context=SimpleNamespace(words=words)))
+    cal = P.calibrate(SimpleNamespace(examples=examples), spans, "group")
+    flags = np.array([True, False, True, True, False, True, True])
+    assert group_members(flags, starts, ends, (2, 3)).tolist() == [0, 1, 2]
+    items = [(s.with_null(), group_members(flags, starts, ends, ex.gold)) for ex, s in zip(examples, spans)]
+    assert cal["unit"] == "group" and cal["questions"] == 200
+    assert cal["nll"] == pytest.approx(temperature_nll(items, cal["temperature"]))
+    span_cal = P.calibrate(SimpleNamespace(examples=examples), spans)
+    assert span_cal["unit"] == "span" and cal["nll_at_1"] < span_cal["nll_at_1"]     # the group holds the gold
+
+
+def test_windows_carry_content_flags_and_the_gold_core(small_train):
+    from squadqa.decode import content_flags
+    batch = D.collate(small_train.batch(list(range(len(small_train.examples)))), 0)
+    rows = small_train.batch(list(range(len(small_train.examples))))
+    for r, (b, w) in enumerate(rows):
+        ex = small_train.examples[b]
+        flags = content_flags(ex.question.context, ex.context.words)
+        assert batch["content"][r, :w.n_words].tolist() == flags[w.first_word:w.first_word + w.n_words].tolist()
+        if w.gold is not None:                             # the core lies inside the gold, on content words
+            cs, ce = int(batch["core_start"][r]), int(batch["core_end"][r])
+            gold = flags[w.first_word + w.gold[0]:w.first_word + w.gold[1] + 1]
+            if cs < 0:
+                assert not gold.any()
+            else:
+                assert w.gold[0] <= cs <= ce <= w.gold[1] and flags[w.first_word + cs] and flags[w.first_word + ce]
 
 
 def test_no_null_without_the_option(tok):

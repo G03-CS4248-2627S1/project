@@ -24,6 +24,7 @@ f1_target: normalized                  # normalized = content-word F1, boundary 
 f1_target_weight: 0.0                  # α, the F1:EM loss ratio (§4.3); 0 = one-hot target (rows 0–1), tuned in E1
 f1_target_temperature: 0.1             # τ: how evenly the F1 credit is spread
 f1_target_floor: 0.5                   # φ: spans with F1 < φ get no F1 credit; 0 = every overlapping span
+target_unit: span                      # span = targets per span (t_EM on the annotated span) | group = per group of boundary variants, so both parts count the gold answer once (§4.3; needs f1_target normalized)
 risk_weight: 0.0                       # β: weight of the expected-F1 (risk) loss added to the target loss (§4.3); 0 = none
 risk_em_weight: 0.0                    # γ_r: weight of the EM loss inside the risk term, ℒ_risk = Σ p · (ℓ_F1 + γ_r · ℓ_EM) (§4.3); 0 = F1 only. Separate from the decoding γ
 calibration: temperature               # one T, fit on validation split

@@ -141,9 +141,22 @@ def log_softmax(scores: np.ndarray, temperature: float = 1.0) -> np.ndarray:
 
 # Calibration (spec §4.4): one temperature, fit on the validation split.
 
-def temperature_nll(items: list[tuple[np.ndarray, int]], temperature: float) -> float:
-    """Mean negative log-likelihood of the gold span at this temperature."""
-    return float(np.mean([-log_softmax(s, temperature)[g] for s, g in items]))
+def temperature_nll(items: list[tuple[np.ndarray, int | np.ndarray]], temperature: float) -> float:
+    """Mean negative log-likelihood of the gold at this temperature: of the gold span (an index), or
+    of the gold's group (an array of indices, target_unit group)."""
+    return float(np.mean([-np.logaddexp.reduce(np.atleast_1d(log_softmax(s, temperature)[g])) for s, g in items]))
+
+
+def group_members(flags: np.ndarray, starts: np.ndarray, ends: np.ndarray, gold: tuple[int, int]) -> np.ndarray:
+    """Indices of the spans in the gold span's group: those with its first and last content word, as
+    group_keys groups them (the gold alone if it has no content word)."""
+    idx = np.arange(len(flags))
+    next_c = np.minimum.accumulate(np.where(flags, idx, len(flags))[::-1])[::-1]
+    prev_c = np.maximum.accumulate(np.where(flags, idx, -1))
+    f, l = int(next_c[gold[0]]), int(prev_c[gold[1]])
+    if f > l:
+        return np.flatnonzero((starts == gold[0]) & (ends == gold[1]))
+    return np.flatnonzero((next_c[starts] == f) & (prev_c[ends] == l))
 
 
 def fit_temperature(items: list[tuple[np.ndarray, int]], lo: float = 0.05, hi: float = 20.0,

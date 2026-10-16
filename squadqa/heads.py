@@ -34,6 +34,11 @@ over its windows (question_nll treats the copies like gold copies). Training dat
 it on SQuAD v1.1, and decoding never returns it (spec rule 5); it only takes probability mass.
 
 The loss puts all of a question's windows into one softmax (spec §3.4): see question_nll.
+
+target_unit (joint and compound): span, the default, scores the annotated span, −log p(y*). group
+scores the gold's group of boundary variants, −log p(G*), the sum over every span that covers the
+gold's content words (group_nll), so the loss counts the gold answer once, as normalized EM does.
+Compound's auxiliary start and end term stays one-hot either way (spec §4.3).
 """
 
 import torch
@@ -301,10 +306,49 @@ def joint_nll(out: dict, batch: dict, n_examples: int) -> torch.Tensor:
     return question_nll(with_null(span.flatten(1), out.get("null")), gold, batch["example"], n_examples)
 
 
+def gold_group(span: torch.Tensor, batch: dict) -> torch.Tensor:
+    """(W, n, n) bool: the valid spans of each window in its question's gold group (target_unit group,
+    spec §4.3), the spans that cover the gold's content words and only those: the boundary variants,
+    grouped as decode.group_keys does. Worked out per window from the gold's content core, so a trimmed
+    variant also counts in a window that cuts off the rest of the gold. A gold without a content word
+    is its own group."""
+    content = batch["content"]
+    n = content.size(1)
+    idx = torch.arange(n, device=content.device)
+    next_c = torch.where(content, idx, n).flip(-1).cummin(-1).values.flip(-1)     # first content word >= i
+    prev_c = torch.where(content, idx, -1).cummax(-1).values                       # last content word <= j
+    cs, ce = batch["core_start"][:, None, None], batch["core_end"][:, None, None]
+    member = (next_c[:, :, None] == cs) & (prev_c[:, None, :] == ce) & (cs >= 0)
+    gs, ge = batch["gold_start"][:, None, None], batch["gold_end"][:, None, None]
+    alone = (idx[None, :, None] == gs) & (idx[None, None, :] == ge)
+    no_core = ((batch["core_start"] < 0) & (batch["gold_start"] >= 0))[:, None, None]
+    return torch.where(no_core, alone, member) & torch.isfinite(span)
+
+
+def group_nll(out: dict, batch: dict, n_examples: int) -> torch.Tensor:
+    """-log p(G*) (target_unit group): the gold group's summed probability under one softmax over every
+    valid span of the question's windows (and the null). Copies in overlapping windows add up, as
+    question_nll does for the gold span."""
+    span = out["span"]
+    member = gold_group(span, batch)
+    all_lse = _segment_logsumexp(torch.logsumexp(with_null(span.flatten(1), out.get("null")), -1),
+                                 batch["example"], n_examples)
+    gold = torch.logsumexp(span.masked_fill(~member, NEG_INF).flatten(1), -1)
+    gold_lse = _segment_logsumexp(gold, batch["example"], n_examples)
+    if not torch.isfinite(gold_lse).all():
+        raise RuntimeError("a training question has no valid span in its gold group")
+    return all_lse - gold_lse
+
+
 def check_head_config(cfg: dict) -> None:
     """Raise on a head setting that is not built or does not apply (spec rule 7: nothing ignored)."""
     if cfg["span_head"] not in HEADS:
         raise ValueError(f"unknown span_head {cfg['span_head']!r}; choose from {HEADS}")
+    if cfg["target_unit"] not in ("span", "group"):
+        raise ValueError(f"unknown target_unit {cfg['target_unit']!r}; choose span or group")
+    if cfg["target_unit"] == "group" and (cfg["f1_target"] != "normalized" or cfg["span_head"] not in BILINEAR):
+        raise ValueError("target_unit group pools boundary variants: it needs f1_target normalized and a "
+                         f"span softmax, span_head in {BILINEAR}")
     if cfg["risk_em_weight"] < 0 or (cfg["risk_em_weight"] and not cfg["risk_weight"]):
         raise ValueError("risk_em_weight is the EM weight inside the risk loss: it must be >= 0, "
                          "and above 0 only with risk_weight > 0")
@@ -331,6 +375,7 @@ class Reader(nn.Module):
         self.kind = cfg["span_head"]
         self.no_answer = cfg["no_answer"]
         self.aux_weight = cfg["aux_independent_weight"]
+        self.target_unit = cfg["target_unit"]
         args = (encoder.config.hidden_size, cfg["head_dim"], cfg["max_answer_words"], cfg["train"]["head_dropout"])
         if self.kind == "standard":
             self.head = StandardSpanHead(*args)
@@ -357,7 +402,7 @@ class Reader(nn.Module):
             return independent_nll(out, batch, n_examples)
         if self.kind == "conditional":
             return self.head.loss(out, batch, n_examples)
-        joint = joint_nll(out, batch, n_examples)
+        joint = (group_nll if self.target_unit == "group" else joint_nll)(out, batch, n_examples)
         return joint if self.kind == "joint" else joint + self.aux_weight * independent_nll(out, batch, n_examples)
 
     def span_scores(self, batch: dict) -> tuple[torch.Tensor, torch.Tensor | None]:

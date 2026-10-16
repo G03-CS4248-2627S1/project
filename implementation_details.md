@@ -2,7 +2,7 @@
 
 Implementation spec for coding agents and team members.
 
-- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.6). **How:** this file. **When:** [timeline.md](timeline.md). **How we work:** [workflow.md](workflow.md).
+- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.7). **How:** this file. **When:** [timeline.md](timeline.md). **How we work:** [workflow.md](workflow.md).
 - Week labels such as W2 or W5+ are plan weeks: W1–W7 are course weeks 7–13.
 - If this file and the plan disagree, stop and ask a human.
 
@@ -48,6 +48,7 @@ f1_target: normalized                  # normalized = content-word F1, boundary 
 f1_target_weight: 0.0                  # α, the F1:EM loss ratio (§4.3); 0 = one-hot target (rows 0–1), tuned in E1
 f1_target_temperature: 0.1             # τ: how evenly the F1 credit is spread
 f1_target_floor: 0.5                   # φ: spans with F1 < φ get no F1 credit; 0 = every overlapping span
+target_unit: span                      # span = targets per span (t_EM on the annotated span) | group = per group of boundary variants, so both parts count the gold answer once (§4.3; needs f1_target normalized)
 risk_weight: 0.0                       # β: weight of the expected-F1 (risk) loss added to the target loss (§4.3); 0 = none
 risk_em_weight: 0.0                    # γ_r: weight of the EM loss inside the risk term, ℒ_risk = Σ p · (ℓ_F1 + γ_r · ℓ_EM) (§4.3); 0 = F1 only. Separate from the decoding γ
 calibration: temperature               # one T, fit on validation split
@@ -214,7 +215,9 @@ P = overlap / (j − i + 1);  R = overlap / (j* − i* + 1);  F1 = 2PR / (P + R)
 t(y) = (1 − α) · t_EM(y) + α · t_F1(y)              # α, τ, φ tuned on validation
 t_EM: all mass on the annotated span y*, as in the one-hot loss of rows 0–1
 t_F1(y) ∝ exp(−ℓ_F1(y, y*) / τ) where F1 > 0 and F1 ≥ φ, else 0     # ℓ_F1 = 1 − F1
-ℒ_soft = − Σ_y t(y) · log p(y)                    # α = 0: ℒ_CE = − log p(y*)
+ℒ_soft = − Σ_y t(y) · log p(y)                    # α = 0: ℒ_CE = − log p(y*); target_unit span (the default)
+target_unit group:  ℒ_soft = (1 − α) · (− log p(G*)) + α · (− Σ_G t_F1(G) · log p(G))
+  G = a group of boundary variants, G* the gold's; p(G) = Σ_{y ∈ G} p(y); t_F1 as above, one weight per group
 ℒ_risk = Σ_y p(y) · [ℓ_F1(y, y*) + γ_r · ℓ_EM(y, y*)]   # every valid span; no floor; γ_r = 0: F1 only
 ℒ = ℒ_soft + β · ℒ_risk                            # β = risk_weight, γ_r = risk_em_weight (plan §6.2)
 ```
@@ -239,7 +242,11 @@ t_F1(y) ∝ exp(−ℓ_F1(y, y*) / τ) where F1 > 0 and F1 ≥ φ, else 0     # 
 **Note: this F1 differs from the official scorer's.** The scorer normalizes both strings first: lowercase, delete ASCII punctuation, remove *a*/*an*/*the*, collapse whitespace (`normalize_answer` in `qa/evaluate-v2.0.py`). Here, punctuation words and articles count, so a leading "the" or a trailing "." costs about 0.2 F1 (gold "Eiffel Tower" vs. "the Eiffel Tower": 0.8 here, 1.0 official). This is part of the F1-weighted-target work (timeline 2.2), selected by `f1_target`, with an ablation of `positional` vs. `normalized` on base:
 - **`normalized`:** give each word a 0/1 flag (0 for punctuation words and articles; these are *content words* when 1) and count only content words in the overlap and lengths, with prefix sums, so it stays vectorized on the GPU. A span with no content words ("the", ".") matches only the identical span: the scorer would call any two such spans equal, but they sit at different positions (rule 4), and the scorer gives such a prediction 0 against any gold answer with content words (2 of 87,334 aligned train answers have none). It is still positional: only words at the same positions overlap.
 - **Boundary variants are exact matches:** a span that covers exactly the annotated answer's content words, differing only by leading or trailing articles or punctuation ("the Eiffel Tower" vs. "Eiffel Tower"), gets the same F1 credit as the annotated span (F1 = 1, so the full weight in t_F1) and ℓ_EM = 0. They are found from the annotated span, so no string search is involved.
-  - **The one-hot part t_EM stays on the annotated span** (decided 16 Oct 2026, #49). 74% of aligned training answers have a boundary variant (2.5 spans on average, the gold included), so equal mass on the variants would move most of the EM part off the annotated span, and α = 0 would no longer be the one-hot loss that rows 0–1 were trained with.
+  - **Equal t_EM mass on the variants is not used** (decided 16 Oct 2026, #49). 74% of aligned training answers have a boundary variant (2.5 spans on average, the gold included, up to 8), so it would move most of the EM part off the annotated span.
+  - **Per span or per group** (`target_unit`, 16 Oct 2026, #49):
+    - `span` (the default): t_EM puts all its mass on the annotated span, so α = 0 is the one-hot loss that rows 0–1 were trained with. But each boundary variant gets its own t_F1 weight, so the gold's group gets one unit per variant: extra EM weight inside the F1 part that varies by question. The target's EM:F1 ratio is exactly (1 − α) : α only per group.
+    - `group`: both parts work on groups of boundary variants, grouped as in decoding (`decode.group_keys`: the same content words at the same position; a span without content words is its own group). The EM part is −log p(G*), t_F1 gives each group one weight, and p(G) sums the probabilities of the group's spans. Each part then counts the gold answer once, as normalized EM does, and the model splits a group's mass among its variants as it likes. α = 0 is then −log p(G*), not the rows 0–1 loss. Built for the EM part (`heads.group_nll`, for α = 0); the F1 part comes with the F1-weighted target (#49). Group membership is worked out per window from the gold's content core (`core_start`, `core_end` in the batch), so a trimmed variant also counts in a window that cuts off the gold's leading article. Compound's auxiliary start and end term stays one-hot.
+    - `group` needs `f1_target: normalized` (under `positional` every span is its own group) and a span softmax (span_head joint or compound). The risk loss is the same under both, since every member of a group has the same loss.
 - **The same text elsewhere in the passage gets no credit** (rule 4), whatever the scorer does. This is where `normalized` deliberately differs from the scorer, besides punctuation inside a word ("U.S." → "us", "well-known" → "wellknown") and the scorer's bag-of-tokens comparison.
 - The size of the gap is measured in week 8 (timeline 1.6); it bounds what `normalized` can gain.
 
@@ -282,7 +289,7 @@ risk = (logp.exp() * torch.where(valid, span_loss, torch.zeros_like(span_loss)))
   - With `positional` (an E1 row), F1 is positional word F1 and EM(y, y') = 1 if the spans are identical.
   - With `string`, y ranges over string groups, and F1 and EM are the scorer's own `compute_f1` and `compute_exact` (bag of tokens after normalization). Return the group's most probable span.
   - γ = `mbr_em_weight` (the proposal's F1:EM ratio), tuned on the validation split. γ = 0 is expected F1; a large γ approaches MAP.
-- **Calibration:** fit one temperature T on the validation split (minimize the NLL of the gold span). Questions whose answer is not a valid span (not word-aligned, or over 30 words) are left out of the fit and counted in `calibration.json`.
+- **Calibration:** fit one temperature T on the validation split (minimize the NLL of the gold span; under `target_unit: group`, of the gold's group, the summed probability of its boundary variants, the unit the reader was trained on, so T doesn't punish how it splits a group among variants; `calibration.json` records the unit). Questions whose answer is not a valid span (not word-aligned, or over 30 words) are left out of the fit and counted in `calibration.json`.
 - **No-answer option:** the null stays in the softmax, for calibration and for every span's probability (`squadqa.decode.span_logp`). MAP and MBR still choose among spans only, because the predictions file needs a non-empty answer for every question (rule 5).
   - MBR's choice doesn't change: every answer scores 0 against "no answer", so the null adds the same 0 to each candidate's expected utility.
   - `metrics.json` reports how much mass the null takes (`no_answer_<split>`).
