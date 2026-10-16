@@ -305,6 +305,9 @@ def check_head_config(cfg: dict) -> None:
     """Raise on a head setting that is not built or does not apply (spec rule 7: nothing ignored)."""
     if cfg["span_head"] not in HEADS:
         raise ValueError(f"unknown span_head {cfg['span_head']!r}; choose from {HEADS}")
+    if cfg["risk_em_weight"] < 0 or (cfg["risk_em_weight"] and not cfg["risk_weight"]):
+        raise ValueError("risk_em_weight is the EM weight inside the risk loss: it must be >= 0, "
+                         "and above 0 only with risk_weight > 0")
     if cfg["f1_target_weight"] or cfg["risk_weight"]:
         raise NotImplementedError("F1-weighted targets and the risk loss (milestone 1a) are not built yet; "
                                   "set f1_target_weight=0 and risk_weight=0")
