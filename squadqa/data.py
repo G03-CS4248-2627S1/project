@@ -218,6 +218,8 @@ class Window:
     ctx_start: int                          # positions in input_ids of the first and last passage token
     ctx_end: int
     gold: tuple[int, int] | None = None     # gold word span local to this window, if wholly inside
+    content: np.ndarray | None = None       # (n,) bool: which window words are content words (spec §4.3)
+    core: tuple[int, int] | None = None     # the gold's first and last content word, local, if both are inside
 
     @property
     def n_words(self) -> int:
@@ -310,12 +312,23 @@ def featurize(questions: list[Question], tokenizer, cfg: dict, training: bool) -
         else:
             examples.append(Example(q, ctx, gold))
 
+    from squadqa.decode import content_flags        # here: squadqa.decode imports this module
+
+    flags = {c: content_flags(c, ctx.words) for c, ctx in contexts.items()}
     layout = pair_layout(tokenizer)
     question_ids = tokenizer([ex.question.question for ex in examples], add_special_tokens=False)["input_ids"]
     for e, (ex, q_ids) in enumerate(zip(examples, question_ids)):
+        f = flags[ex.question.context]
+        core = None                                     # the gold's content core: its first and last content word
+        if ex.gold is not None and f[ex.gold[0]:ex.gold[1] + 1].any():
+            c = np.flatnonzero(f[ex.gold[0]:ex.gold[1] + 1])
+            core = (ex.gold[0] + int(c[0]), ex.gold[0] + int(c[-1]))
         for win in make_windows(q_ids, ex.context, layout, cfg["max_seq_len"], cfg["doc_stride"], e):
             if ex.gold is not None and win.first_word <= ex.gold[0] and ex.gold[1] < win.first_word + win.n_words:
                 win.gold = (ex.gold[0] - win.first_word, ex.gold[1] - win.first_word)
+            win.content = f[win.first_word:win.first_word + win.n_words]
+            if core is not None and win.first_word <= core[0] and core[1] < win.first_word + win.n_words:
+                win.core = (core[0] - win.first_word, core[1] - win.first_word)
             ex.windows.append(len(windows))
             windows.append(win)
 
@@ -368,6 +381,10 @@ def collate(rows: list[tuple[int, Window]], pad_id: int) -> dict:
     first_word                      (W,): global index of the window's first word
     ctx_start, ctx_end              (W,): first and last passage token, for "most central" (§3.4)
     gold_start, gold_end            (W,): gold word span local to the window, -1 if not wholly inside
+    content                         (W, n): content-word flags (spec §4.3); padding is False
+    core_start, core_end            (W,): the gold's first and last content word, local, -1 unless both
+                                    are inside (target_unit group: a trimmed boundary variant can sit in a
+                                    window that cuts off the gold's leading "the")
     """
     import torch
 
@@ -378,13 +395,17 @@ def collate(rows: list[tuple[int, Window]], pad_id: int) -> dict:
     first_tok = torch.zeros((len(rows), n), dtype=torch.long)
     last_tok = torch.zeros((len(rows), n), dtype=torch.long)
     word_mask = torch.zeros((len(rows), n), dtype=torch.bool)
+    content = torch.zeros((len(rows), n), dtype=torch.bool)
     for r, (_, w) in enumerate(rows):
+        if w.content is not None:
+            content[r, :w.n_words] = torch.from_numpy(np.asarray(w.content, dtype=bool))
         input_ids[r, :len(w.input_ids)] = torch.from_numpy(w.input_ids.astype(np.int64))
         attention_mask[r, :len(w.input_ids)] = 1
         first_tok[r, :w.n_words] = torch.from_numpy(w.first_tok.astype(np.int64))
         last_tok[r, :w.n_words] = torch.from_numpy(w.last_tok.astype(np.int64))
         word_mask[r, :w.n_words] = True
     gold = [w.gold or (-1, -1) for _, w in rows]
+    core = [w.core or (-1, -1) for _, w in rows]
     return {
         "input_ids": input_ids, "attention_mask": attention_mask,
         "first_tok": first_tok, "last_tok": last_tok, "word_mask": word_mask,
@@ -394,6 +415,9 @@ def collate(rows: list[tuple[int, Window]], pad_id: int) -> dict:
         "ctx_end": torch.tensor([w.ctx_end for _, w in rows]),
         "gold_start": torch.tensor([g[0] for g in gold]),
         "gold_end": torch.tensor([g[1] for g in gold]),
+        "content": content,
+        "core_start": torch.tensor([c[0] for c in core]),
+        "core_end": torch.tensor([c[1] for c in core]),
     }
 
 

@@ -33,7 +33,7 @@ from squadqa import evaluate as E
 from squadqa.config import RESULTS, env, write_json
 from squadqa.data import Features, collate, featurize, load_split, load_squad, load_tokenizer
 from squadqa.decode import (SpanScores, answer_text, combine_windows, content_flags, decode,
-                            fit_temperature, span_logp, temperature_nll, top_k)
+                            fit_temperature, group_members, span_logp, temperature_nll, top_k)
 
 
 def score_questions(score_fn, feats: Features, pad_id: int, max_answer_words: int,
@@ -65,18 +65,24 @@ def score_questions(score_fn, feats: Features, pad_id: int, max_answer_words: in
     return out
 
 
-def calibrate(feats: Features, spans: list[SpanScores]) -> dict:
+def calibrate(feats: Features, spans: list[SpanScores], unit: str = "span") -> dict:
     """Fit the temperature on these questions (the validation split) against each question's
-    annotated answer. Questions whose answer is not a valid span (not word-aligned or too long)
-    are left out and counted. A no-answer option stays in the softmax being fitted."""
+    annotated answer: its span, or with unit "group" (target_unit) the summed probability of its
+    group of boundary variants, the unit the reader was trained on. Questions whose answer is not a
+    valid span (not word-aligned or too long; under group, no valid span in its group) are left out
+    and counted. A no-answer option stays in the softmax being fitted."""
     items = []
     for ex, s in zip(feats.examples, spans):
-        g = s.index(ex.gold)
+        if unit == "group" and ex.gold is not None:
+            g = group_members(content_flags(ex.question.context, ex.context.words), s.starts, s.ends, ex.gold)
+            g = g if len(g) else None
+        else:
+            g = s.index(ex.gold)
         if g is not None:
             items.append((s.with_null(), g))
     t = fit_temperature(items)
     return {"temperature": t, "nll_at_1": temperature_nll(items, 1.0), "nll": temperature_nll(items, t),
-            "questions": len(items), "left_out": len(spans) - len(items)}
+            "questions": len(items), "left_out": len(spans) - len(items), "unit": unit}
 
 
 def no_answer_summary(spans: list[SpanScores], temperature: float) -> dict | None:
@@ -145,7 +151,7 @@ def predict_split(model, tok, cfg: dict, run_dir: Path, device: str, split: str,
     feats = featurize(questions, tok, cfg, training=False)
     spans = score_questions(reader_score_fn(model, device), feats, tok.pad_token_id, cfg["max_answer_words"],
                             batch_size, device)
-    cal = calibrate(feats, spans) if temperature is None else None
+    cal = calibrate(feats, spans, cfg["target_unit"]) if temperature is None else None
     t = cal["temperature"] if cal else temperature
     preds, cands = decode_questions(feats, spans, cfg, t)
     write_outputs(run_dir, split, preds, cands if save_candidates else None, cal)
