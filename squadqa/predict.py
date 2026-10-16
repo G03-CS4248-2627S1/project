@@ -104,8 +104,9 @@ def decode_questions(feats: Features, spans: list[SpanScores], cfg: dict,
         q = ex.question
         flags = content_flags(q.context, ex.context.words)
         cands = top_k(s, cfg["decode_topk"], temperature)
+        texts = [answer_text(q.context, ex.context.words, a, b) for a, b in zip(cands.starts, cands.ends)]
         for rule in cfg["decode_rules"]:
-            i, j = decode(cands, flags, rule, cfg["mbr_utility"], cfg["mbr_em_weight"])
+            i, j = decode(cands, flags, rule, cfg["mbr_utility"], cfg["mbr_em_weight"], texts)
             preds[rule][q.id] = answer_text(q.context, ex.context.words, i, j)
         cands_out[q.id] = [[int(a), int(b), round(float(lp), 6)]
                            for a, b, lp in zip(cands.starts, cands.ends, cands.logp)]

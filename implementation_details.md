@@ -13,7 +13,7 @@ Implementation spec for coding agents and team members.
 1. `dev-v1.1.json` is the **test set**. Never train on it, tune on it, or inspect its predictions except in final evaluation runs. All tuning uses the validation split (§3.1).
 2. Never generate training data (questions, distractors) from `dev-v1.1.json` passages.
 3. No closed-source LLM or API calls in training or inference code. (Use for data generation is pending a ruling; see plan §2.)
-4. Locate gold answers with `answer_start`, never by string search. 11% of answers appear more than once in their paragraph. The same text at another position is **never** a correct answer, even though the official scorer would accept it. Only answers the dataset annotates, each at its own `answer_start`, are gold. Normalization changes only how a span at the annotated position is compared (§4.3–4.4).
+4. Locate gold answers with `answer_start`, never by string search. 11% of answers appear more than once in their paragraph. The same text at another position is **never** a correct answer, even though the official scorer would accept it. Only answers the dataset annotates, each at its own `answer_start`, are gold. Normalization changes only how a span at the annotated position is compared (§4.3–4.4). The one exception is the `string` decoding row of E1 (`mbr_utility: string`, §4.4), which groups equal texts at any position to measure what this rule costs; training targets never use it.
 5. Every reported number comes from the official `evaluate-v2.0.py`. Predictions file: `{question_id: answer_text}` for **every** question, never an empty string (an empty string counts as "no answer").
 6. Never edit a reference implementation or a test to make new code pass. If a test looks wrong, stop and report.
 7. No silent fallbacks. If a fast path (FlexAttention, KV cache) is unavailable, raise an error or log it loudly. Never switch paths quietly, especially in benchmarks.
@@ -43,7 +43,7 @@ no_answer: false                       # true = a null option, the span (CLS, CL
 decode_topk: 10
 decode_rules: [map, mbr]               # always report both
 mbr_em_weight: 1.0                     # γ, the F1:EM decoding ratio: MBR utility F1 + γ·EM; 0 = expected F1
-mbr_utility: normalized                # normalized = content-word F1/EM, boundary variants grouped | positional (E1 row; §4.4)
+mbr_utility: normalized                # normalized = content-word F1/EM, boundary variants grouped | positional | string = the scorer's normalization at any position (both E1 rows; §4.4)
 f1_target: normalized                  # normalized = content-word F1, boundary variants exact | positional (ablation; §4.3)
 f1_target_weight: 0.0                  # α, the F1:EM loss ratio (§4.3); 0 = one-hot target (rows 0–1), tuned in E1
 f1_target_temperature: 0.1             # τ: how evenly the F1 credit is spread
@@ -269,10 +269,12 @@ risk = (logp.exp() * torch.where(valid, f1_loss, torch.zeros_like(f1_loss))).sum
 ### 4.4 Decoding
 - `topk` over flattened scores (k = 10) → (i, j) → characters `(word_start[i], word_end[j])` → answer = `context[a:b]`.
 - **Group boundary variants** (`mbr_utility: normalized`, the default): spans that cover the same content words at the same positions (§4.3; "the Eiffel Tower" and "Eiffel Tower") are one answer, so add up their probabilities. The same text elsewhere in the passage stays a separate answer (rule 4).
+- **String grouping** (`mbr_utility: string`, an E1 row; decoding only): candidates whose texts are equal after the official scorer's `normalize_answer` are one answer, wherever they are in the passage. This is the grouping the scorer rewards, so it measures what rule 4 costs at decoding time; training targets never use it. A candidate whose text normalizes to nothing ("the", ".") is its own group and matches only itself, as under `normalized`.
 - **MAP** = the most probable group, returning its most probable span (top-1 span when `mbr_utility: positional`). Groups and their probabilities are formed among the top-k candidates, under the full softmax.
 - **MBR:** after calibration, among the top-k pick `argmax_y Σ_y' p(y') · [F1(y, y') + γ · EM(y, y')]`.
   - With `normalized`, y ranges over groups, and F1 and EM are the content-word versions from §4.3 (EM = 1 when two spans cover the same content words). Return the group's most probable span.
   - With `positional` (an E1 row), F1 is positional word F1 and EM(y, y') = 1 if the spans are identical.
+  - With `string`, y ranges over string groups, and F1 and EM are the scorer's own `compute_f1` and `compute_exact` (bag of tokens after normalization). Return the group's most probable span.
   - γ = `mbr_em_weight` (the proposal's F1:EM ratio), tuned on the validation split. γ = 0 is expected F1; a large γ approaches MAP.
 - **Calibration:** fit one temperature T on the validation split (minimize the NLL of the gold span). Questions whose answer is not a valid span (not word-aligned, or over 30 words) are left out of the fit and counted in `calibration.json`.
 - **No-answer option:** the null stays in the softmax, for calibration and for every span's probability (`squadqa.decode.span_logp`). MAP and MBR still choose among spans only, because the predictions file needs a non-empty answer for every question (rule 5).
@@ -284,7 +286,7 @@ risk = (logp.exp() * torch.where(valid, f1_loss, torch.zeros_like(f1_loss))).sum
   1. Take the most probable span and the most probable span that does not overlap it and has a content word (§4.3). By position they are a = (i1, j1) and b = (i2, j2), with i1 < i2. A span of only punctuation or articles is no answer, and joining one to a would give a boundary variant of a, not a cross span.
   2. The cross span is c = (i1, j2), if valid; without one the ratio below is 0.
   3. Report p(c) / (p(a) + p(b) + p(c)), with p calibrated (the run's temperature), bucketed by top-1 probability (< 0.5, 0.5–0.9, > 0.9), for the standard and joint heads.
-  4. Also count how often each decision rule answers with the cross span (under `mbr_utility: normalized`, a boundary variant of it counts), with the official scores of those answers. This shows whether cross spans cause errors (plan §5: expected-F1 decoding favours them).
+  4. Also count how often each decision rule answers with the cross span (under `mbr_utility: normalized` or `string`, a boundary variant of it counts), with the official scores of those answers. This shows whether cross spans cause errors (plan §5: expected-F1 decoding favours them).
 - **Equivalence test:** with W = 0 and b = 0, the joint head's argmax must equal the argmax over valid (i, j) of `u·h_i + v·h_j`, for every `bilinear_form` and `bilinear_pos` (`tests/test_heads.py`).
 
 ---
