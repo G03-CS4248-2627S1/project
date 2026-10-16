@@ -104,7 +104,7 @@ A grid of runs can be shared through a GitHub issue that holds a task pool, so t
   - **Cluster limits** (checked September 2026; details in `.claude/skills/soc-cluster/SKILL.md`):
     - The login node allows 1 GB of virtual memory and 300 s of CPU time per process and has a tiny `/tmp` quota. Build environments and run Python in jobs, not on the login node.
     - GPU jobs need `--partition=gpu` (up to 3 hours) or `--partition=gpu-long` (up to 3 days). The default partition has no GPUs.
-    - Request A100, H100 or H200 GPUs, which support bf16.
+    - Request A100, H100 or H200 GPUs, which support bf16. `--gpus=flexible` (in `soc.sh submit` and `squadqa.pool claim`) picks whichever bf16 type is estimated to start first (SKILL.md).
     - SSH to GitHub is blocked, so clone and pull over HTTPS.
     - `soc.sh submit slurm/smoke_test.sbatch` checks the environment.
 

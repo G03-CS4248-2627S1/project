@@ -82,3 +82,10 @@ def test_pick_named_or_next_open():
         P.pick(s, ["t1"], 1)
     with pytest.raises(SystemExit, match="no task"):
         P.pick(s, ["t7"], 1)
+
+
+def test_the_started_comment_records_the_gpu_a_task_got():
+    flexible = "\n".join(["Flexible GPU: estimated starts", "GPU: h100-96 (flexible)", "Submitted batch job 123"])
+    assert P.started_gpu(["--gpus=flexible", "--time=00:45:00"], flexible) == "h100-96"
+    assert P.started_gpu(["--gpus=a100-40"], "Submitted batch job 123") == "a100-40"
+    assert P.started_gpu(["--time=00:45:00"], "Submitted batch job 123") == "default"

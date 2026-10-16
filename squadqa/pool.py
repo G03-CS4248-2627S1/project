@@ -19,7 +19,7 @@ opened the issue, may also release). Two people claiming at once is safe: both p
 and the later one moves on. Don't delete pool comments.
 
     python -m squadqa.pool status <issue> [--jobs]       # every task's state; --jobs asks Slurm about running ones
-    python -m squadqa.pool claim <issue> [task ...] [-n N] [--gpus TYPE]   # claim open tasks and submit them
+    python -m squadqa.pool claim <issue> [task ...] [-n N] [--gpus TYPE|flexible]   # claim open tasks and submit them
     python -m squadqa.pool done <issue> <task>           # fetch results, push them to the pool branch, post done
     python -m squadqa.pool release <issue> <task> <reason ...>
     python -m squadqa.pool publish <issue> <pool.json>   # pool owner: write the tasks into the issue body
@@ -233,6 +233,15 @@ def cmd_status(args) -> None:
               f"  and bash {SOC} run 'git fetch && git checkout --detach {c}' (not while your jobs are queued)")
 
 
+def started_gpu(opts: list[str], soc_output: str) -> str:
+    """The GPU type a submitted task got: the one soc.sh chose for --gpus=flexible (its "GPU: <type>
+    (flexible)" line), else the --gpus option, else "default"."""
+    chosen = re.search(r"^GPU: (\S+) \(flexible\)$", soc_output, re.M)
+    if chosen:
+        return chosen.group(1)
+    return next((o.split("=", 1)[1] for o in opts if o.startswith("--gpus=")), "default")
+
+
 def cmd_claim(args) -> None:
     pool, states, _ = load(args.issue)
     require_pool_commit(pool)
@@ -252,7 +261,7 @@ def cmd_claim(args) -> None:
         if not job:
             post(args.issue, f"pool: release {name} submit failed")
             raise SystemExit(f"{name}: submit failed, task released:\n{out}")
-        gpu = next((o.split("=", 1)[1] for o in opts if o.startswith("--gpus=")), "default")
+        gpu = started_gpu(opts, out)
         post(args.issue, f"pool: started {name} job={job.group(1)} gpu={gpu}")
         print(f"{name}: job {job.group(1)} on {gpu}")
 
@@ -336,7 +345,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("issue", type=int)
     p.add_argument("tasks", nargs="*")
     p.add_argument("-n", type=int, default=1, help="how many open tasks to claim when none are named")
-    p.add_argument("--gpus", help="GPU type instead of the pool's, e.g. h100-96")
+    p.add_argument("--gpus", help="GPU type instead of the pool's, e.g. h100-96, or flexible: per task, the bf16 "
+                                  "type with the earliest estimated start (soc.sh pick-gpu)")
     p = sub.add_parser("done")
     p.add_argument("issue", type=int)
     p.add_argument("task")
