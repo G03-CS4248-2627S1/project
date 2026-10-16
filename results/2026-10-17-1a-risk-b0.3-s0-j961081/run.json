@@ -1,0 +1,11 @@
+{
+  "run_id": "2026-10-17-1a-risk-b0.3-s0-j961081",
+  "experiment": "1a-risk",
+  "config_file": "configs/experiments/1a-risk.yaml",
+  "seed": 0,
+  "git_commit": "579228ed5d2b0ad3b8ed1be4b6b9a63d154e473e",
+  "git_dirty": false,
+  "slurm_job_id": "961081",
+  "host": "xgpk0",
+  "started": "2026-10-17T01:54:06"
+}
