@@ -203,20 +203,28 @@ def require_pool_commit(pool: dict) -> None:
 
 # Commands.
 
+def queue_states(jobs: list[str]) -> dict[str, str] | None:
+    """{job id: state} for the jobs still in the Slurm queue, or None if the queue could not be read
+    (the tunnel is down). squeue -j fails once a listed job has left the queue, so that error is
+    ignored on the cluster side; only a failed connection gives None, never an empty queue."""
+    try:
+        listing = soc("run", f"squeue -h -j {','.join(jobs)} -o '%i %T' 2>/dev/null || true")
+    except SystemExit:
+        return None
+    return {p[0]: p[1] for p in (line.split() for line in listing.splitlines()) if len(p) == 2}
+
+
 def cmd_status(args) -> None:
     pool, states, owner = load(args.issue)
     user = me()
-    queue = {}
     running = [t.job for t in states.values() if t.state == "running" and t.job]
-    if args.jobs and running:
-        for line in soc("run", f"squeue -h -j {','.join(running)} -o '%i %T'", check=False).splitlines():
-            if len(line.split()) == 2:
-                queue[line.split()[0]] = line.split()[1]
+    queue = queue_states(running) if args.jobs and running else {}
     print(f"pool of #{args.issue} (owner {owner}): commit {pool['commit'][:7]} on {pool['branch']}")
     for t in states.values():
         extra = f"job {t.job}" if t.job else ""
         if args.jobs and t.state == "running":
-            extra += f" {queue.get(t.job, 'not in the queue: finished or failed, so run done or release')}"
+            extra += (" queue unknown: could not reach the cluster (soc.sh check)" if queue is None else
+                      f" {queue.get(t.job, 'not in the queue: finished or failed, so run done or release')}")
         if t.run:
             extra += f" run {t.run}"
         if t.state == "open" and t.note:
@@ -256,7 +264,10 @@ def cmd_claim(args) -> None:
         if args.gpus:
             opts = [o for o in opts if not o.startswith("--gpus")] + [f"--gpus={args.gpus}"]
         export = ",".join(["ALL"] + [f"{k}={v}" for k, v in spec.get("export", {}).items()])
-        out = soc("submit", *opts, f"--export={export}", pool["script"], *spec.get("args", []), check=False)
+        try:
+            out = soc("submit", *opts, f"--export={export}", pool["script"], *spec.get("args", []))
+        except SystemExit as e:                     # keeps soc.sh's stderr, e.g. "The tunnel is not open"
+            out = str(e)
         job = re.search(r"Submitted batch job (\d+)", out)
         if not job:
             post(args.issue, f"pool: release {name} submit failed")
