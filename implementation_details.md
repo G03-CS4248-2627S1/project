@@ -148,6 +148,23 @@ def word_spans(text: str) -> list[tuple[int, int]]:
 - **SQuAD 2.0 unanswerable questions** (`data/external/squad2/train-v2.0.json`): after duplicate removal this file holds only the unanswerable questions, all on train-v1.1 passages. They are verifier negatives when `unanswerable_negatives: true` (§5.1). Their candidates are the reader's top-k plus each `plausible_answers` span, located with its `answer_start` (rule 4) and converted to word spans (§3.2). Drop plausible answers that are not word-aligned.
 - **Augmentation (P2):** each rule (letter case, date format, name substitution) edits the passage, question and answer together, and carries `answer_start` through the edit by offset arithmetic, never by search (rule 4). The offset round-trip test (§9) must pass on the augmented set. Never augment validation articles or anything from dev-v1.1 (rules 1–2).
 
+### 3.7 Multi-answer data for E6 (plan §7.2, §8)
+- **Purpose:** check whether cross-entropy makes p match a known answer distribution q. E6 only: never ladder training or tuning data.
+- **Source:** Natural Questions dev (Kwiatkowski et al., 2019) in the MRQA 2019 format (Fisch et al., 2019), pinned by URL and SHA-256 in `squadqa/multi_answer.py`; CC BY-SA 3.0. `python -m squadqa.multi_answer` builds `data/external/multi_answer/` (gitignored). SQuAD train has one answer per question (66 questions are asked twice about one passage with different answers), and the MRQA NewsQA dev file has one answer per question too (checked 2026-10-16).
+- **Build** (counts in `summary.json`; on 2026-10-16: 12,836 questions → 1,000 train and 250 held out, 3.4 answers each):
+  - Strip the HTML markup MRQA keeps in NQ contexts and remap answer offsets; drop answers that start or end in markup. Drop answers that are not word-aligned or exceed `max_answer_words`.
+  - Merge boundary variants with `decode.group_keys` and keep questions with 2+ distinct answers. MRQA keeps no annotator counts, so q is equal over a question's answers; training draws its answers from q, so q is the true distribution by construction.
+  - Drop passages that share a word 10-gram with a dev-v1.1 passage (9 on 2026-10-16). Split by passage, 20% held out, seed 0.
+- **Files:** `train.json` holds each question once per answer as a one-answer question (id `<qid>_a<k>`) with `"weight": q(answer)`; `heldout.json` holds each held-out question with all its answers; `q.json` holds q for every question.
+- **Training weights each copy's loss by its `weight`,** so every question totals 1 and the objective is soft-label cross-entropy against q. Without it a question with k answers counts k times, and a SQuAD + E6 mix over-weights E6 about 3.4×. Sampling one answer per question each epoch optimizes the same expected objective (Gheibi & Ghazizadeh, 2026) but needs several epochs; the frozen recipe has one.
+- **E6 scoring** (not built yet; conventions follow ChaosNLI's `evaluation/tools.py`, Nie et al., 2020, read 2026-10-16):
+  - Sum p over each group of boundary variants first, because q is defined over groups.
+  - KL(q ‖ p) with the natural log, the direction ChaosNLI uses (human ‖ model). It needs p only on q's answers: spans with q = 0 add nothing, so it is the full-space value.
+  - Jensen-Shannon distance (scipy's `jensenshannon`, natural log; the square root of the divergence), over q's answers plus one "rest" bucket holding p's mass elsewhere. The bucket gives exactly the full-space value, because each span outside q's support adds ½ · p(y) · log 2 either way.
+  - Floor p at 1e-15 and renormalize, as ChaosNLI does. Report at T = 1 (ChaosNLI's plain softmax) and at the temperature fitted on SQuAD validation, and average over held-out questions without weights.
+  - Post-hoc smoothing alone can halve KL (Zhang, Gong & Choi, 2021), so the decision-level test is expected EM and F1 under q of the MAP and MBR answers.
+- **Caveat:** many of NQ's multiple answers are items of a list answer ("who are the co-hosts"), each correct on its own, rather than competing phrasings. q spreads equally over them.
+
 ---
 
 ## 4. Joint span head
