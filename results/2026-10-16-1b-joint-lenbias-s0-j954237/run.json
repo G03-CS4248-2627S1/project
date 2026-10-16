@@ -1,0 +1,11 @@
+{
+  "run_id": "2026-10-16-1b-joint-lenbias-s0-j954237",
+  "experiment": "1b-joint",
+  "config_file": "configs/experiments/1b-joint.yaml",
+  "seed": 0,
+  "git_commit": "a3d2ba66aa7aba7672b5d0a5ad4e81fbca10ab1b",
+  "git_dirty": false,
+  "slurm_job_id": "954237",
+  "host": "xgpg1",
+  "started": "2026-10-16T01:33:31"
+}
