@@ -237,6 +237,9 @@ def test_conditional_loss_uses_only_windows_holding_the_answer():
     (["bilinear_pos=learned"], ValueError),
     (["f1_target_weight=0.3"], NotImplementedError),
     (["risk_weight=0.1"], NotImplementedError),
+    (["risk_weight=0.1", "risk_em_weight=1.0"], NotImplementedError),
+    (["risk_em_weight=1.0"], ValueError),                       # an EM weight for a risk loss that is off
+    (["risk_weight=0.1", "risk_em_weight=-1.0"], ValueError),
     (["W_init=random"], NotImplementedError),
 ])
 def test_settings_that_are_not_built_or_do_not_apply_raise(overrides, error):

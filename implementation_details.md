@@ -2,7 +2,7 @@
 
 Implementation spec for coding agents and team members.
 
-- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.5). **How:** this file. **When:** [timeline.md](timeline.md). **How we work:** [workflow.md](workflow.md).
+- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.6). **How:** this file. **When:** [timeline.md](timeline.md). **How we work:** [workflow.md](workflow.md).
 - Week labels such as W2 or W5+ are plan weeks: W1–W7 are course weeks 7–13.
 - If this file and the plan disagree, stop and ask a human.
 
@@ -49,6 +49,7 @@ f1_target_weight: 0.0                  # α, the F1:EM loss ratio (§4.3); 0 = o
 f1_target_temperature: 0.1             # τ: how evenly the F1 credit is spread
 f1_target_floor: 0.5                   # φ: spans with F1 < φ get no F1 credit; 0 = every overlapping span
 risk_weight: 0.0                       # β: weight of the expected-F1 (risk) loss added to the target loss (§4.3); 0 = none
+risk_em_weight: 0.0                    # γ_r: weight of the EM loss inside the risk term, ℒ_risk = Σ p · (ℓ_F1 + γ_r · ℓ_EM) (§4.3); 0 = F1 only. Separate from the decoding γ
 calibration: temperature               # one T, fit on validation split
 extra_train_data: []                   # row 5: [adversarialqa]; augmentation (P2) adds augmented
 train:                                 # reader fine-tuning: the plan's sandbox recipe (plan §15.1); lr and epochs tuned in row 0 (plan §15.3)
@@ -211,11 +212,11 @@ Word-level positional F1 between a span y = (i, j) and the gold span y* = (i*, j
 overlap = max(0, min(j, j*) − max(i, i*) + 1)
 P = overlap / (j − i + 1);  R = overlap / (j* − i* + 1);  F1 = 2PR / (P + R)   (0 if overlap = 0)
 t(y) = (1 − α) · t_EM(y) + α · t_F1(y)              # α, τ, φ tuned on validation
-t_EM: equal mass on y* and its boundary variants (ℓ_EM = 1 − EM = 0)
+t_EM: all mass on the annotated span y*, as in the one-hot loss of rows 0–1
 t_F1(y) ∝ exp(−ℓ_F1(y, y*) / τ) where F1 > 0 and F1 ≥ φ, else 0     # ℓ_F1 = 1 − F1
 ℒ_soft = − Σ_y t(y) · log p(y)                    # α = 0: ℒ_CE = − log p(y*)
-ℒ_risk = Σ_y p(y) · ℓ_F1(y, y*)                    # every valid span; no floor, no EM part
-ℒ = ℒ_soft + β · ℒ_risk                            # β = risk_weight (plan §6.2)
+ℒ_risk = Σ_y p(y) · [ℓ_F1(y, y*) + γ_r · ℓ_EM(y, y*)]   # every valid span; no floor; γ_r = 0: F1 only
+ℒ = ℒ_soft + β · ℒ_risk                            # β = risk_weight, γ_r = risk_em_weight (plan §6.2)
 ```
 - **One objective for every training variant** (plan §6.2):
 
@@ -224,7 +225,10 @@ t_F1(y) ∝ exp(−ℓ_F1(y, y*) / τ) where F1 > 0 and F1 ≥ φ, else 0     # 
   | α = 0 | one-hot (rows 0–1) | one-hot + risk |
   | α > 0 | F1-weighted targets | F1-weighted targets + risk |
 
-- **The risk term uses F1 only.** EM is already in ℒ_soft: its (1 − α) part is −log p(gold), the log form of the expected EM loss 1 − p(gold). An EM term in ℒ_risk would count EM twice, in the linear form whose gradient vanishes when p(gold) is small.
+- **The risk term's EM weight γ_r** (`risk_em_weight`, default 0 = F1 only; decided 16 Oct 2026, #49). On questions whose answer is uncertain, the risk loss alone puts all mass on the answer MBR would choose under the same utility, so a reader trained with it and decoded with MAP aims at MBR with utility F1 + γ_r · EM. In E1, set γ_r to the γ (`mbr_em_weight`) of the MBR cell it is compared with, so both routes target the same answer; the two keys stay separate.
+  - It does not count EM twice. The (1 − α) part of ℒ_soft, −log p(gold), is the log form of the expected EM loss 1 − p(gold); it makes p estimate the posterior and leaves the decision alone. The linear EM term inside ℒ_risk moves probability toward exact matches, as the risk loss does for F1.
+  - The linear term's gradient is weak while p(gold) is small, but ℒ_soft carries training then.
+  - ℓ_EM is the EM of `f1_target`: under `normalized` a boundary variant has ℓ_EM = 0. Per question, the optimum of ℒ becomes p(y) = t(y) / (c + β · (ℓ_F1(y, y*) + γ_r · ℓ_EM(y, y*))), so γ_r adds the same penalty to every span that is not an exact match.
 - **The risk term needs no floor.** It weights spans by p, not by how many overlap the gold; spans with F1 = 0 count as full loss, which is right there.
 - `α` is the proposal's F1:EM loss ratio: the exact-match (one-hot) and F1-weighted parts are mixed `(1 − α) : α` (`f1_target_weight`).
 - `τ` (`f1_target_temperature`) sets how evenly the F1 credit is spread; `φ` (`f1_target_floor`) sets which spans get any. φ = 0 credits every overlapping span.
@@ -234,7 +238,8 @@ t_F1(y) ∝ exp(−ℓ_F1(y, y*) / τ) where F1 > 0 and F1 ≥ φ, else 0     # 
   - Log the expected F1 of t_F1 during training as a check.
 **Note: this F1 differs from the official scorer's.** The scorer normalizes both strings first: lowercase, delete ASCII punctuation, remove *a*/*an*/*the*, collapse whitespace (`normalize_answer` in `qa/evaluate-v2.0.py`). Here, punctuation words and articles count, so a leading "the" or a trailing "." costs about 0.2 F1 (gold "Eiffel Tower" vs. "the Eiffel Tower": 0.8 here, 1.0 official). This is part of the F1-weighted-target work (timeline 2.2), selected by `f1_target`, with an ablation of `positional` vs. `normalized` on base:
 - **`normalized`:** give each word a 0/1 flag (0 for punctuation words and articles; these are *content words* when 1) and count only content words in the overlap and lengths, with prefix sums, so it stays vectorized on the GPU. A span with no content words ("the", ".") matches only the identical span: the scorer would call any two such spans equal, but they sit at different positions (rule 4), and the scorer gives such a prediction 0 against any gold answer with content words (2 of 87,334 aligned train answers have none). It is still positional: only words at the same positions overlap.
-- **Boundary variants are exact matches:** a span that covers exactly the annotated answer's content words, differing only by leading or trailing articles or punctuation ("the Eiffel Tower" vs. "Eiffel Tower"), gets the same credit as the annotated span. The one-hot part of the target becomes uniform over these variants. They are found from the annotated span, so no string search is involved.
+- **Boundary variants are exact matches:** a span that covers exactly the annotated answer's content words, differing only by leading or trailing articles or punctuation ("the Eiffel Tower" vs. "Eiffel Tower"), gets the same F1 credit as the annotated span (F1 = 1, so the full weight in t_F1) and ℓ_EM = 0. They are found from the annotated span, so no string search is involved.
+  - **The one-hot part t_EM stays on the annotated span** (decided 16 Oct 2026, #49). 74% of aligned training answers have a boundary variant (2.5 spans on average, the gold included), so equal mass on the variants would move most of the EM part off the annotated span, and α = 0 would no longer be the one-hot loss that rows 0–1 were trained with.
 - **The same text elsewhere in the passage gets no credit** (rule 4), whatever the scorer does. This is where `normalized` deliberately differs from the scorer, besides punctuation inside a word ("U.S." → "us", "well-known" → "wellknown") and the scorer's bag-of-tokens comparison.
 - The size of the gap is measured in week 8 (timeline 1.6); it bounds what `normalized` can gain.
 
@@ -243,7 +248,8 @@ Cross-entropy, NaN-safe (masked entries have log p = −inf, and 0 · −inf = N
 logp = scores.flatten(1).log_softmax(-1)
 loss = -torch.where(target > 0, target * logp, torch.zeros_like(logp)).sum(-1).mean()
 # risk term: masked spans have p = 0, but give them a finite loss so 0 · ℓ stays 0
-risk = (logp.exp() * torch.where(valid, f1_loss, torch.zeros_like(f1_loss))).sum(-1).mean()
+span_loss = f1_loss + risk_em_weight * em_loss          # ℓ_F1 + γ_r · ℓ_EM
+risk = (logp.exp() * torch.where(valid, span_loss, torch.zeros_like(span_loss))).sum(-1).mean()
 ```
 
 **Compound objective** (`span_head: compound`, ladder row 1; Fajcik et al. 2021): add the standard independent loss on the head's start and end scores.
