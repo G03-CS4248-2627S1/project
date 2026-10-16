@@ -305,6 +305,13 @@ def check_head_config(cfg: dict) -> None:
     """Raise on a head setting that is not built or does not apply (spec rule 7: nothing ignored)."""
     if cfg["span_head"] not in HEADS:
         raise ValueError(f"unknown span_head {cfg['span_head']!r}; choose from {HEADS}")
+    if cfg["target_unit"] not in ("span", "group"):
+        raise ValueError(f"unknown target_unit {cfg['target_unit']!r}; choose span or group")
+    if cfg["target_unit"] == "group":
+        if cfg["f1_target"] != "normalized" or cfg["span_head"] not in BILINEAR:
+            raise ValueError("target_unit group pools boundary variants: it needs f1_target normalized and a "
+                             f"span softmax, span_head in {BILINEAR}")
+        raise NotImplementedError("target_unit group (milestone 1a, #49) is not built yet; set target_unit=span")
     if cfg["risk_em_weight"] < 0 or (cfg["risk_em_weight"] and not cfg["risk_weight"]):
         raise ValueError("risk_em_weight is the EM weight inside the risk loss: it must be >= 0, "
                          "and above 0 only with risk_weight > 0")

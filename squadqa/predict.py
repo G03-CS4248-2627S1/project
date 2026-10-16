@@ -171,8 +171,8 @@ def eval_questions(name: str):
 
 # Config keys added after some runs were trained, with the values that reproduce how those runs
 # were trained (the row-0 runs have none of them).
-ADDED_KEYS = {"f1_target_weight": 0.0, "risk_weight": 0.0, "risk_em_weight": 0.0, "no_answer": False, "length_bias": True,
-              "bilinear_form": "full", "bilinear_rank": 64, "bilinear_pos": "none"}
+ADDED_KEYS = {"f1_target_weight": 0.0, "risk_weight": 0.0, "risk_em_weight": 0.0, "target_unit": "span",
+              "no_answer": False, "length_bias": True, "bilinear_form": "full", "bilinear_rank": 64, "bilinear_pos": "none"}
 
 
 def run_config(run_id: str) -> dict:
