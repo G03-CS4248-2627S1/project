@@ -388,6 +388,10 @@ Not the default: the default candidates are sampled from the final reader (§5.1
   - Main number, Jia & Liang's adversarial score, with the grouping of the authors' `eval_squad.py` (CodaLab bundle `0xc2824269ba0a4179ac63c08fd3997d1c`, checked 2026-10-04; `squadqa.evaluate.adversarial_groups`). Group questions by the id prefix before the first `-`. In a group with adversarial versions (787 of the 1,000), the original is not used: take the version with the lowest F1 (the first in file order on ties) and that version's EM, so EM is not minimized separately. A group without versions keeps its original. Average over the 1,000 groups.
   - Get per-question EM and F1 from the official scorer's own `get_raw_scores` (load `qa/evaluate-v2.0.py` with `importlib`); only the grouping is ours (rule 5).
   - Also report the scorer's plain average over all questions in the file, which many papers quote instead, and the average over the 1,000 originals alone.
+- **Unnormalized scoring** (a diagnostic; `python -m squadqa.evaluate <set> <predictions> --no-normalize`, or `normalize=False`): the official scorer's code with `normalize_answer` replaced by the identity (`squadqa.evaluate.raw_scorer`; `qa/evaluate-v2.0.py` is not changed). EM is exact string equality and F1 is bag-of-tokens over whitespace tokens, with case, punctuation and articles kept. It shows how much the scorer's normalization forgives, and is never a reported number (rule 5).
+  - Measured 2026-10-16 on validation: the row-0 large seeds score 69.5 EM / 87.1–87.2 F1 unnormalized against 76.8–77.0 / 89.5–89.7 official (MAP), about 7.4 EM and 2.4 F1 forgiven. The base runs (row-0 base, 1b `joint-plain`) lose the same within 0.3, so normalization does not change the ranking.
+  - About 70% of the exact matches lost unnormalized differ from the gold only by a leading "the"; case alone accounts for 1–2. No validation gold answer has leading or trailing whitespace.
+  - Raw F1 can exceed the official F1: "the dog" against gold "the cat" shares "the" (0.5 raw, 0 official).
 
 ---
 

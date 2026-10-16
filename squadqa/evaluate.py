@@ -5,6 +5,12 @@ loaded with importlib and never modified, and summaries from its make_eval_dict.
 adds only what the scorer lacks: checks on the predictions, Adversarial SQuAD's worst-case
 grouping, and paired bootstrap intervals.
 
+Unnormalized scoring (normalize=False, --no-normalize) is a diagnostic: a second copy of the
+official scorer with normalize_answer replaced by the identity, so EM is exact string equality and
+F1 is bag-of-tokens over whitespace tokens, with case, punctuation and articles kept. Everything
+else is the official code. It shows how much the scorer's normalization forgives; reported
+numbers always use the official scorer (spec rule 5).
+
 Evaluation sets: the validation split during development. Dev, Adversarial SQuAD (addsent,
 addonesent) and the four SQuAD-Shifts sets are scored once, in the final scoring, so loading
 one of them needs final=True (--final on the command line).
@@ -12,6 +18,7 @@ one of them needs final=True (--final on the command line).
     python -m squadqa.evaluate validation results/<run_id>/predictions.json
     python -m squadqa.evaluate validation a.json --compare b.json     # paired bootstrap of b - a
     python -m squadqa.evaluate addsent predictions.json --final -o metrics_addsent.json
+    python -m squadqa.evaluate validation predictions.json --no-normalize   # diagnostic only
 
 Run from the repo root, like every entry point.
 """
@@ -50,6 +57,18 @@ def scorer():
     spec = importlib.util.spec_from_file_location("squad_official_eval", SCORER)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    return module
+
+
+@cache
+def raw_scorer():
+    """A separate copy of qa/evaluate-v2.0.py whose normalize_answer is the identity (the file is
+    not changed). Its compute_exact, get_tokens and get_raw_scores look the name up when called, so
+    they then compare raw strings; scorer() is a different module object and keeps normalizing."""
+    spec = importlib.util.spec_from_file_location("squad_official_eval_unnormalized", SCORER)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.normalize_answer = lambda s: s
     return module
 
 
@@ -109,10 +128,12 @@ def check_predictions(dataset: list[dict], preds: Mapping[str, str]) -> None:
         raise ValueError("bad predictions: " + "; ".join(problems))
 
 
-def per_question(dataset: list[dict], preds: Mapping[str, str]) -> tuple[dict[str, float], dict[str, float]]:
-    """(EM, F1) per question id, each 0-1, from the official scorer (max over gold answers)."""
+def per_question(dataset: list[dict], preds: Mapping[str, str],
+                 normalize: bool = True) -> tuple[dict[str, float], dict[str, float]]:
+    """(EM, F1) per question id, each 0-1, from the official scorer (max over gold answers);
+    normalize=False uses raw_scorer, the diagnostic without the scorer's normalization."""
     check_predictions(dataset, preds)
-    exact, f1 = scorer().get_raw_scores(dataset, preds)
+    exact, f1 = (scorer() if normalize else raw_scorer()).get_raw_scores(dataset, preds)
     return {k: float(v) for k, v in exact.items()}, {k: float(v) for k, v in f1.items()}
 
 
@@ -141,11 +162,14 @@ def adversarial_groups(dataset: list[dict], exact: Mapping[str, float],
     return {o: exact[q] for o, q in chosen.items()}, {o: f1[q] for o, q in chosen.items()}
 
 
-def metrics(name: str, dataset: list[dict], preds: Mapping[str, str]) -> dict:
+def metrics(name: str, dataset: list[dict], preds: Mapping[str, str], normalize: bool = True) -> dict:
     """Summary for one evaluation set. Adversarial sets add the worst-case score over the
-    original ids ("adversarial", the main number) and the originals alone ("original")."""
-    exact, f1 = per_question(dataset, preds)
+    original ids ("adversarial", the main number) and the originals alone ("original").
+    normalize=False scores without the scorer's normalization and says so ("normalized": false)."""
+    exact, f1 = per_question(dataset, preds, normalize)
     out = summarize(exact, f1)
+    if not normalize:
+        out["normalized"] = False
     if name in ADVERSARIAL:
         adv_exact, adv_f1 = adversarial_groups(dataset, exact, f1)
         missing = [o for o in adv_exact if o not in exact]
@@ -187,9 +211,9 @@ def paired_bootstrap(a: Mapping[str, float], b: Mapping[str, float],
 
 
 def compare(name: str, dataset: list[dict], preds_a: Mapping[str, str], preds_b: Mapping[str, str],
-            resamples: int = 10_000, seed: int = 0) -> dict:
+            resamples: int = 10_000, seed: int = 0, normalize: bool = True) -> dict:
     """Paired bootstrap of b - a for EM and F1 (over adversarial groups on Adversarial SQuAD)."""
-    (ea, fa), (eb, fb) = per_question(dataset, preds_a), per_question(dataset, preds_b)
+    (ea, fa), (eb, fb) = per_question(dataset, preds_a, normalize), per_question(dataset, preds_b, normalize)
     if name in ADVERSARIAL:
         (ea, fa), (eb, fb) = adversarial_groups(dataset, ea, fa), adversarial_groups(dataset, eb, fb)
     return {"exact": paired_bootstrap(ea, eb, resamples, seed),
@@ -204,15 +228,19 @@ def main(argv: list[str] | None = None) -> dict:
                         help="paired bootstrap of PREDICTIONS_B minus predictions")
     parser.add_argument("--final", action="store_true", help="allow dev and the robustness sets (stage 5 only)")
     parser.add_argument("--resamples", type=int, default=10_000)
+    parser.add_argument("--no-normalize", action="store_true",
+                        help="diagnostic: score raw strings, without the scorer's normalization (never a reported number)")
     parser.add_argument("-o", "--out", help="write the result as JSON here (default: print it)")
     args = parser.parse_args(argv)
 
     dataset = load_eval_set(args.eval_set, args.final)
     preds = load_predictions(args.predictions)
+    normalize = not args.no_normalize
     if args.compare:
-        result = compare(args.eval_set, dataset, preds, load_predictions(args.compare), args.resamples)
+        result = compare(args.eval_set, dataset, preds, load_predictions(args.compare), args.resamples,
+                         normalize=normalize)
     else:
-        result = metrics(args.eval_set, dataset, preds)
+        result = metrics(args.eval_set, dataset, preds, normalize)
     if args.out:
         write_json(Path(args.out), result)
     else:
