@@ -157,8 +157,10 @@ def train(model, feats: D.Features, cfg: dict, seed: int, pad_id: int, ckpt_path
         losses.append(step_loss / len(batch_ids))
         if step % 50 == 0 or step == total_steps or step == stop_after:
             el = time.time() - t0
+            check = getattr(model, "stats", {}).get("t_f1_expected_f1")     # spec §4.3's check on t_F1
             log(f"step {step}/{total_steps} loss {loss_sum / loss_n:.4f} lr {sched.get_last_lr()[0]:.2e} "
-                f"{window_sum / max(el, 1e-9):.1f} windows/s {el / 60:.1f} min")
+                f"{window_sum / max(el, 1e-9):.1f} windows/s {el / 60:.1f} min"
+                + (f" t_F1 expected F1 {check:.3f}" if check is not None else ""))
             loss_sum, loss_n = 0.0, 0
         epoch_end = on_epoch_end is not None and step % n_batches == 0 and step < total_steps
         if step % t["checkpoint_every"] == 0 or step == total_steps or epoch_end:

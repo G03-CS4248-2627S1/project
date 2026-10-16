@@ -1,0 +1,10 @@
+# E1 (#49), cells E and F: one-hot cross-entropy plus the risk loss on the joint-plain head, per group of
+# boundary variants (spec §4.3). The risk term's EM weight gamma_r = r = 1, the same as MBR's gamma = 1
+# (base.yaml). beta is swept with --set (slurm/e1_runs.sh); 1.0 here is the middle of the grid.
+model: microsoft/deberta-v3-base
+span_head: joint
+length_bias: false
+no_answer: true
+target_unit: group
+risk_weight: 1.0
+risk_em_weight: 1.0

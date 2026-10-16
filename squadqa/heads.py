@@ -340,6 +340,102 @@ def group_nll(out: dict, batch: dict, n_examples: int) -> torch.Tensor:
     return all_lse - gold_lse
 
 
+# F1-weighted targets and the risk loss (milestone 1a; spec §4.3).
+
+def gold_f1_em(span: torch.Tensor, batch: dict, n_examples: int,
+               counted: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """(W, n, n) F1 and EM of every window span against its question's gold span, positional over the
+    words flagged in counted (W, n): the content words for f1_target normalized, every word for
+    positional; decode.span_f1_em is the same function on one passage. Worked out in passage
+    coordinates from the windows that hold the gold, so a span in a window that cuts the gold still
+    gets its partial credit. A span with no counted word matches only the identical span."""
+    W, n = counted.shape
+    dev = counted.device
+    ex, fw, gs, ge = batch["example"], batch["first_word"], batch["gold_start"], batch["gold_end"]
+    prefix = torch.cat([torch.zeros(W, 1, dtype=torch.long, device=dev), counted.long().cumsum(-1)], -1)
+    rows = torch.nonzero(gs >= 0).squeeze(1)
+    per_q = lambda v: torch.full((n_examples,), -1, dtype=torch.long, device=dev).scatter_reduce(
+        0, ex[rows], v, "amax")
+    g_start, g_end = per_q(fw[rows] + gs[rows]), per_q(fw[rows] + ge[rows])
+    g_len = per_q(prefix[rows, ge[rows] + 1] - prefix[rows, gs[rows]])
+    has = (g_start[ex] >= 0)[:, None, None]
+    s_l, e_l = (g_start[ex] - fw)[:, None, None], (g_end[ex] - fw)[:, None, None]   # may lie outside the window
+    lg = g_len[ex][:, None, None]
+    i = torch.arange(n, device=dev)[None, :, None]
+    j = torch.arange(n, device=dev)[None, None, :]
+    ls = prefix[:, None, 1:] - prefix[:, :n, None]                                   # counted words in (i, j)
+    lo, hi = torch.maximum(i, s_l), torch.minimum(j, e_l)
+    take = lambda k: prefix.gather(1, k.clamp(0, n).expand(W, n, n).reshape(W, -1)).view(W, n, n)
+    overlap = torch.where(lo <= hi, take(hi + 1) - take(lo), 0)
+    identical = (i == s_l) & (j == e_l) & has
+    f1 = torch.where(has & (ls + lg > 0), 2.0 * overlap / (ls + lg).clamp(min=1), 0.0)
+    em = (overlap == ls) & (overlap == lg) & (lg > 0) & has
+    return torch.where(identical, 1.0, f1), (em | identical).float()
+
+
+def _question_lse(out: dict, batch: dict, n_examples: int) -> torch.Tensor:
+    """(n_examples,) log of each question's softmax normalizer: every valid span of its windows and the null."""
+    return _segment_logsumexp(torch.logsumexp(with_null(out["span"].flatten(1), out.get("null")), -1),
+                              batch["example"], n_examples)
+
+
+def f1_target_nll(out: dict, batch: dict, n_examples: int, temperature: float, floor: float, unit: str,
+                  counted: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """The F1 part of the soft target, −Σ_u t_F1(u) · log p(u) per question, and the expected F1 under
+    t_F1 (spec §4.3). u ranges over distinct passage spans (target_unit span) or groups of boundary
+    variants (group); p(u) sums the probabilities of u's spans in every window of the question, and
+    t_F1(u) ∝ exp(−(1 − F1)/τ) on units with F1 > 0 and F1 ≥ φ, each unit counted once."""
+    span = out["span"]
+    ex, fw = batch["example"], batch["first_word"]
+    f1, _ = gold_f1_em(span, batch, n_examples, counted)
+    r, i, j = torch.nonzero(torch.isfinite(span) & (f1 > 0) & (f1 >= floor), as_tuple=True)
+    logp = span[r, i, j].float() - _question_lse(out, batch, n_examples)[ex[r]]
+    if unit == "group":
+        n = counted.size(1)
+        idx = torch.arange(n, device=counted.device)
+        next_c = torch.where(counted, idx, n).flip(-1).cummin(-1).values.flip(-1)
+        prev_c = torch.where(counted, idx, -1).cummax(-1).values
+        a, b = next_c[r, i], prev_c[r, j]
+        own = a > b                                     # no content word: a group of its own
+        a, b, kind = torch.where(own, i, a), torch.where(own, j, b), own.long()
+    else:
+        a, b, kind = i, j, torch.zeros_like(i)
+    big = int(fw.max()) + counted.size(1) + 1
+    key = ((ex[r] * big + fw[r] + a) * big + fw[r] + b) * 2 + kind
+    units, inv = torch.unique(key, return_inverse=True)
+    m = len(units)
+    unit_max = lambda v: torch.zeros(m, dtype=v.dtype, device=v.device).scatter_reduce(
+        0, inv, v, "amax", include_self=False)
+    logp_u = _segment_logsumexp(logp, inv, m)
+    f1_u = unit_max(f1[r, i, j].float())                     # the same for every span of a unit
+    ex_u = unit_max(ex[r])
+    w_u = torch.exp(-(1 - f1_u) / temperature)
+    z = torch.zeros(n_examples, device=w_u.device).index_add(0, ex_u, w_u)
+    if (z[torch.unique(ex)] <= 0).any():
+        raise RuntimeError("a training question has no span with F1 credit")
+    t = w_u / z[ex_u]
+    loss = torch.zeros(n_examples, device=t.device).index_add(0, ex_u, -t * logp_u)
+    expected_f1 = torch.zeros(n_examples, device=t.device).index_add(0, ex_u, t * f1_u)
+    return loss, expected_f1
+
+
+def risk_loss(out: dict, batch: dict, n_examples: int, em_weight: float, counted: torch.Tensor) -> torch.Tensor:
+    """Σ_y p(y) · (ℓ_F1 + γ_r · ℓ_EM) per question over every valid span of its windows (spec §4.3). The
+    null is never a correct answer, so it adds p(null) · (1 + γ_r). Copies of a span carry the same loss,
+    so the sum over window entries is the sum over passage spans."""
+    span = out["span"]
+    ex = batch["example"]
+    f1, em = gold_f1_em(span, batch, n_examples, counted)
+    lse = _question_lse(out, batch, n_examples)
+    valid = torch.isfinite(span)
+    p = torch.exp(torch.where(valid, span.float() - lse[ex][:, None, None], NEG_INF))
+    cost = torch.where(valid, (1 - f1) + em_weight * (1 - em), 0.0)
+    risk = torch.zeros(n_examples, device=span.device).index_add(0, ex, (p * cost).flatten(1).sum(-1))
+    if out.get("null") is not None:
+        risk = risk.index_add(0, ex, torch.exp(out["null"].float() - lse[ex]) * (1 + em_weight))
+    return risk
+
+
 def check_head_config(cfg: dict) -> None:
     """Raise on a head setting that is not built or does not apply (spec rule 7: nothing ignored)."""
     if cfg["span_head"] not in HEADS:
@@ -352,9 +448,13 @@ def check_head_config(cfg: dict) -> None:
     if cfg["risk_em_weight"] < 0 or (cfg["risk_em_weight"] and not cfg["risk_weight"]):
         raise ValueError("risk_em_weight is the EM weight inside the risk loss: it must be >= 0, "
                          "and above 0 only with risk_weight > 0")
-    if cfg["f1_target_weight"] or cfg["risk_weight"]:
-        raise NotImplementedError("F1-weighted targets and the risk loss (milestone 1a) are not built yet; "
-                                  "set f1_target_weight=0 and risk_weight=0")
+    alpha, tau, floor, beta = (cfg["f1_target_weight"], cfg["f1_target_temperature"], cfg["f1_target_floor"],
+                               cfg["risk_weight"])
+    if not (0 <= alpha <= 1 and tau > 0 and 0 <= floor <= 1 and beta >= 0):
+        raise ValueError("need 0 <= f1_target_weight <= 1, f1_target_temperature > 0, 0 <= f1_target_floor <= 1 "
+                         "and risk_weight >= 0")
+    if (alpha or beta) and cfg["span_head"] not in BILINEAR:
+        raise ValueError(f"F1-weighted targets and the risk loss need a span softmax: span_head in {BILINEAR}")
     if cfg["span_head"] in BILINEAR and cfg["W_init"] != "zeros":
         raise NotImplementedError(f"W_init {cfg['W_init']!r} is not built; only zeros")
     if cfg["bilinear_form"] not in ("full", "dot") or cfg["bilinear_pos"] not in ("none", "additive", "rotary"):
@@ -376,6 +476,9 @@ class Reader(nn.Module):
         self.no_answer = cfg["no_answer"]
         self.aux_weight = cfg["aux_independent_weight"]
         self.target_unit = cfg["target_unit"]
+        self.alpha, self.tau, self.floor = cfg["f1_target_weight"], cfg["f1_target_temperature"], cfg["f1_target_floor"]
+        self.beta, self.risk_em_weight, self.f1_target = cfg["risk_weight"], cfg["risk_em_weight"], cfg["f1_target"]
+        self.stats: dict[str, float] = {}               # the last batch's training checks, for the log
         args = (encoder.config.hidden_size, cfg["head_dim"], cfg["max_answer_words"], cfg["train"]["head_dropout"])
         if self.kind == "standard":
             self.head = StandardSpanHead(*args)
@@ -403,6 +506,15 @@ class Reader(nn.Module):
         if self.kind == "conditional":
             return self.head.loss(out, batch, n_examples)
         joint = (group_nll if self.target_unit == "group" else joint_nll)(out, batch, n_examples)
+        if self.alpha or self.beta:                     # spec §4.3: ℒ = ℒ_soft + β · ℒ_risk on the joint term
+            counted = batch["content"] if self.f1_target == "normalized" else batch["word_mask"]
+            if self.alpha:
+                f1_part, expected_f1 = f1_target_nll(out, batch, n_examples, self.tau, self.floor,
+                                                     self.target_unit, counted)
+                joint = (1 - self.alpha) * joint + self.alpha * f1_part
+                self.stats["t_f1_expected_f1"] = float(expected_f1.mean())
+            if self.beta:
+                joint = joint + self.beta * risk_loss(out, batch, n_examples, self.risk_em_weight, counted)
         return joint if self.kind == "joint" else joint + self.aux_weight * independent_nll(out, batch, n_examples)
 
     def span_scores(self, batch: dict) -> tuple[torch.Tensor, torch.Tensor | None]:
