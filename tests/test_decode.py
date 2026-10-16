@@ -188,6 +188,58 @@ def test_mbr_positional_counts_every_word():
     assert Dc.decode(c, f, "mbr", "positional") == (1, 2)       # tie: the first candidate
 
 
+# String grouping (mbr_utility: string): the scorer's normalization at any position, decoding only.
+
+def texts_of(text, c):
+    w = words_of(text)
+    return [Dc.answer_text(text, w, int(i), int(j)) for i, j in zip(c.starts, c.ends)]
+
+
+def test_string_groups_the_same_text_anywhere():
+    text = "Paris beat Lyon and Paris won"
+    f = flags_of(text)
+    c = cands([(2, 2), (0, 0), (4, 4)], [0.4, 0.3, 0.3])       # Lyon; Paris; Paris elsewhere
+    assert Dc.decode(c, f, "map", "normalized") == (2, 2)       # rule 4: the two Paris spans stay apart
+    assert Dc.decode(c, f, "map", "string", texts=texts_of(text, c)) == (0, 0)   # one group, mass 0.6
+
+
+def test_string_groups_boundary_variants_too():
+    text = "Visit the Eiffel Tower . Big Ben"
+    f = flags_of(text)
+    c = cands([(5, 6), (1, 3), (2, 4)], [0.4, 0.3, 0.3])       # Big Ben; the Eiffel Tower; Eiffel Tower .
+    assert Dc.decode(c, f, "map", "string", texts=texts_of(text, c)) == (1, 3)
+
+
+def test_string_mbr_uses_the_scorers_bag_of_tokens():
+    text = "red green blue . red blue"
+    f = flags_of(text)
+    c = cands([(0, 0), (2, 2), (4, 5)], [0.35, 0.33, 0.32])     # red; blue; "red blue" at other positions
+    # Content-word F1 sees no overlap: expected F1 is each span's own mass, so "red" wins.
+    assert Dc.decode(c, f, "mbr", "normalized", em_weight=0.0) == (0, 0)
+    # Scorer F1("red blue", "red") = F1("red blue", "blue") = 2/3: .32 + .68 * 2/3 = .77 beats .35 + .32 * 2/3.
+    assert Dc.decode(c, f, "mbr", "string", em_weight=0.0, texts=texts_of(text, c)) == (4, 5)
+    f1, em = Dc.string_f1_em(["red blue", "red", "Red blue."])
+    assert f1[0, 1] == pytest.approx(2 / 3) and em[0, 1] == 0.0 and f1[0, 2] == em[0, 2] == 1.0
+
+
+def test_string_spans_that_normalize_to_nothing_never_pool():
+    text = "the dog barked ."
+    f = flags_of(text)
+    c = cands([(1, 1), (3, 3), (0, 0)], [0.45, 0.30, 0.25])     # dog; "."; "the": both normalize to ""
+    for rule in ("map", "mbr"):
+        assert Dc.decode(c, f, rule, "string", texts=texts_of(text, c)) == (1, 1)
+    f1, em = Dc.string_f1_em([".", "the", "dog"])
+    assert f1.tolist() == em.tolist() == [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+
+
+def test_string_needs_the_candidate_texts():
+    c = cands([(0, 0), (1, 1)], [0.6, 0.4])
+    with pytest.raises(ValueError):
+        Dc.decode(c, np.ones(2, bool), "map", "string")
+    with pytest.raises(ValueError):
+        Dc.decode(c, np.ones(2, bool), "map", "string", texts=["a"])
+
+
 def test_unknown_rule_or_utility_raises():
     c = cands([(0, 0)], [1.0])
     with pytest.raises(ValueError):

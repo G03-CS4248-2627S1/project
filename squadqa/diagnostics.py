@@ -14,7 +14,7 @@ the second. Per question, with p the calibrated probabilities over all valid spa
 b needs a content word because a span of only punctuation or articles is no answer, and joining
 one to a would give a boundary variant of a rather than a cross span. The summary buckets the
 ratio by top-1 probability (< 0.5, 0.5-0.9, > 0.9) and counts how often each decision rule
-answers with the cross span (a boundary variant of it counts under mbr_utility normalized),
+answers with the cross span (a boundary variant of it counts under mbr_utility normalized or string),
 with the official scores of those answers.
 
     python -m squadqa.diagnostics --run-id <run_id> [<run_id> ...]           # validation
@@ -79,10 +79,10 @@ def cross_span(spans: SpanScores, flags: np.ndarray, temperature: float = 1.0) -
 
 def is_cross(x: CrossSpan, span: tuple[int, int], flags: np.ndarray, utility: str) -> bool:
     """Whether an answer span is the cross span: the same content words under mbr_utility
-    normalized (so boundary variants count), the identical span under positional."""
+    normalized or string (so boundary variants count), the identical span under positional."""
     if x.c is None:
         return False
-    used = flags if utility == "normalized" else np.ones_like(flags)
+    used = flags if utility in ("normalized", "string") else np.ones_like(flags)
     return bool(span_f1_em(used, span[0], span[1], x.c[0], x.c[1])[1] == 1.0)
 
 
@@ -102,8 +102,9 @@ def cross_spans(feats: Features, spans: list[SpanScores], cfg: dict, temperature
         flags = content_flags(q.context, ex.context.words)
         x = rows[q.id] = cross_span(s, flags, temperature)
         cands = top_k(s, cfg["decode_topk"], temperature)
+        texts = [answer_text(q.context, ex.context.words, a, b) for a, b in zip(cands.starts, cands.ends)]
         for rule in cfg["decode_rules"]:
-            i, j = decode(cands, flags, rule, cfg["mbr_utility"], cfg["mbr_em_weight"])
+            i, j = decode(cands, flags, rule, cfg["mbr_utility"], cfg["mbr_em_weight"], texts)
             preds[rule][q.id] = answer_text(q.context, ex.context.words, i, j)
             if is_cross(x, (i, j), flags, cfg["mbr_utility"]):
                 picks[rule].add(q.id)
