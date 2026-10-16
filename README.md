@@ -56,7 +56,7 @@ Run these in a login session on the cluster.
    srun --partition=normal --time=00:30:00 --cpus-per-task=4 --mem=8G .venv/bin/python -m squadqa.download_model
    srun --partition=normal --time=00:30:00 --cpus-per-task=4 --mem=8G .venv/bin/python -m squadqa.download_external
    ```
-6. **Check the GPU setup.** The job writes `results/<date>-smoke-j<job id>/smoke.json`:
+6. **Check the GPU setup.** The job writes `results/<date>-smoke-j<job id>/smoke.json`. Git ignores it, like every folder in `results/` with "smoke" in its name:
    ```
    sbatch slurm/smoke_test.sbatch
    ```

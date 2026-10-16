@@ -27,3 +27,6 @@ __pycache__/
 
 # Personal list of proposed plan and tooling changes, not yet adopted
 plan_proposals.md
+
+# Smoke-test results (slurm/smoke_test.sbatch and smoke runs of training code): kept on the cluster, never committed
+results/*smoke*/
