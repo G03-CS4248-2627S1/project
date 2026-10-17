@@ -19,7 +19,7 @@ opened the issue, may also release). Two people claiming at once is safe: both p
 and the later one moves on. Don't delete pool comments.
 
     python -m squadqa.pool status <issue> [--jobs]       # every task's state; --jobs asks Slurm about running ones
-    python -m squadqa.pool claim <issue> [task ...] [-n N] [--gpus TYPE]   # claim open tasks and submit them
+    python -m squadqa.pool claim <issue> [task ...] [-n N] [--gpus TYPE|flexible]   # claim open tasks and submit them
     python -m squadqa.pool done <issue> <task>           # fetch results, push them to the pool branch, post done
     python -m squadqa.pool release <issue> <task> <reason ...>
     python -m squadqa.pool publish <issue> <pool.json>   # pool owner: write the tasks into the issue body
@@ -203,20 +203,28 @@ def require_pool_commit(pool: dict) -> None:
 
 # Commands.
 
+def queue_states(jobs: list[str]) -> dict[str, str] | None:
+    """{job id: state} for the jobs still in the Slurm queue, or None if the queue could not be read
+    (the tunnel is down). squeue -j fails once a listed job has left the queue, so that error is
+    ignored on the cluster side; only a failed connection gives None, never an empty queue."""
+    try:
+        listing = soc("run", f"squeue -h -j {','.join(jobs)} -o '%i %T' 2>/dev/null || true")
+    except SystemExit:
+        return None
+    return {p[0]: p[1] for p in (line.split() for line in listing.splitlines()) if len(p) == 2}
+
+
 def cmd_status(args) -> None:
     pool, states, owner = load(args.issue)
     user = me()
-    queue = {}
     running = [t.job for t in states.values() if t.state == "running" and t.job]
-    if args.jobs and running:
-        for line in soc("run", f"squeue -h -j {','.join(running)} -o '%i %T'", check=False).splitlines():
-            if len(line.split()) == 2:
-                queue[line.split()[0]] = line.split()[1]
+    queue = queue_states(running) if args.jobs and running else {}
     print(f"pool of #{args.issue} (owner {owner}): commit {pool['commit'][:7]} on {pool['branch']}")
     for t in states.values():
         extra = f"job {t.job}" if t.job else ""
         if args.jobs and t.state == "running":
-            extra += f" {queue.get(t.job, 'not in the queue: finished or failed, so run done or release')}"
+            extra += (" queue unknown: could not reach the cluster (soc.sh check)" if queue is None else
+                      f" {queue.get(t.job, 'not in the queue: finished or failed, so run done or release')}")
         if t.run:
             extra += f" run {t.run}"
         if t.state == "open" and t.note:
@@ -233,6 +241,15 @@ def cmd_status(args) -> None:
               f"  and bash {SOC} run 'git fetch && git checkout --detach {c}' (not while your jobs are queued)")
 
 
+def started_gpu(opts: list[str], soc_output: str) -> str:
+    """The GPU type a submitted task got: the one soc.sh chose for --gpus=flexible (its "GPU: <type>
+    (flexible)" line), else the --gpus option, else "default"."""
+    chosen = re.search(r"^GPU: (\S+) \(flexible\)$", soc_output, re.M)
+    if chosen:
+        return chosen.group(1)
+    return next((o.split("=", 1)[1] for o in opts if o.startswith("--gpus=")), "default")
+
+
 def cmd_claim(args) -> None:
     pool, states, _ = load(args.issue)
     require_pool_commit(pool)
@@ -247,12 +264,15 @@ def cmd_claim(args) -> None:
         if args.gpus:
             opts = [o for o in opts if not o.startswith("--gpus")] + [f"--gpus={args.gpus}"]
         export = ",".join(["ALL"] + [f"{k}={v}" for k, v in spec.get("export", {}).items()])
-        out = soc("submit", *opts, f"--export={export}", pool["script"], *spec.get("args", []), check=False)
+        try:
+            out = soc("submit", *opts, f"--export={export}", pool["script"], *spec.get("args", []))
+        except SystemExit as e:                     # keeps soc.sh's stderr, e.g. "The tunnel is not open"
+            out = str(e)
         job = re.search(r"Submitted batch job (\d+)", out)
         if not job:
             post(args.issue, f"pool: release {name} submit failed")
             raise SystemExit(f"{name}: submit failed, task released:\n{out}")
-        gpu = next((o.split("=", 1)[1] for o in opts if o.startswith("--gpus=")), "default")
+        gpu = started_gpu(opts, out)
         post(args.issue, f"pool: started {name} job={job.group(1)} gpu={gpu}")
         print(f"{name}: job {job.group(1)} on {gpu}")
 
@@ -336,7 +356,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("issue", type=int)
     p.add_argument("tasks", nargs="*")
     p.add_argument("-n", type=int, default=1, help="how many open tasks to claim when none are named")
-    p.add_argument("--gpus", help="GPU type instead of the pool's, e.g. h100-96")
+    p.add_argument("--gpus", help="GPU type instead of the pool's, e.g. h100-96, or flexible: per task, the bf16 "
+                                  "type with the earliest estimated start (soc.sh pick-gpu)")
     p = sub.add_parser("done")
     p.add_argument("issue", type=int)
     p.add_argument("task")

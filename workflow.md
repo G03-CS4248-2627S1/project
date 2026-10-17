@@ -175,7 +175,7 @@ A grid of runs can be shared through one GitHub issue, so whoever has GPU time r
 - **Everyone, including the owner, runs pool tasks only through the tool:**
   1. `python -m squadqa.pool status <issue> --jobs` shows each task as open, claimed, running or done. Your own are marked `*`; finish those first.
   2. Put your checkout and cluster clone at the pool commit. `status` prints the commands. Every run in a pool comes from that one commit.
-  3. `python -m squadqa.pool claim <issue> -n 2` claims the next two open tasks and submits them; name tasks to pick particular ones, and add `--gpus h100-96` to use another GPU type.
+  3. `python -m squadqa.pool claim <issue> -n 2` claims the next two open tasks and submits them; name tasks to pick particular ones, and add `--gpus h100-96` to use another GPU type, or `--gpus flexible` for whichever bf16 type is estimated to start first (SKILL.md).
   4. When a job ends, `python -m squadqa.pool done <issue> <task>` fetches its results and commits them to the pool branch. It commits from a temporary worktree, so your checkout stays at the pool commit. It then posts the scores. If the job failed, `release <issue> <task> <reason>` reopens the task.
 - **How claims stay unique:** every command posts a comment that starts with `pool:`. The earliest claim on an open task wins, and a later one sees that it lost and moves on. So two people claiming at once is safe. Don't edit or delete these comments.
 - **Your own record:** your assistant notes each claimed task in `local/MEMORY.md` ("Task pools"), so a later session finishes your tasks before claiming more.

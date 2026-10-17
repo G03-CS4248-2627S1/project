@@ -415,7 +415,7 @@ def test_old_run_configs_get_the_settings_they_were_trained_with():
     old = {k: v for k, v in load_config(None, ["span_head=standard"]).items() if k not in P.ADDED_KEYS}
     cfg = {**P.ADDED_KEYS, **old}
     H.check_head_config(cfg)
-    assert cfg["no_answer"] is False and cfg["f1_target_weight"] == 0.0
+    assert cfg["no_answer"] is False and cfg["f1_target_weight"] == 0.0 and cfg["window_layout"] == "left"
 
 
 # Each objective end to end on a tiny encoder.

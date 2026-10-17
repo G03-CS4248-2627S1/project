@@ -82,3 +82,22 @@ def test_pick_named_or_next_open():
         P.pick(s, ["t1"], 1)
     with pytest.raises(SystemExit, match="no task"):
         P.pick(s, ["t7"], 1)
+
+
+def test_a_failed_connection_is_an_unknown_queue_not_an_empty_one(monkeypatch):
+    # From 2026-10-17: with the tunnel down, status called four just-submitted jobs "finished or failed".
+    def down(*args, **kwargs):
+        raise SystemExit("The tunnel is not open.")
+    monkeypatch.setattr(P, "soc", down)
+    assert P.queue_states(["1", "2"]) is None
+    monkeypatch.setattr(P, "soc", lambda *a, **k: "1 RUNNING\n2 PENDING\n")
+    assert P.queue_states(["1", "2", "3"]) == {"1": "RUNNING", "2": "PENDING"}   # 3 has left the queue
+    monkeypatch.setattr(P, "soc", lambda *a, **k: "")
+    assert P.queue_states(["3"]) == {}
+
+
+def test_the_started_comment_records_the_gpu_a_task_got():
+    flexible = "\n".join(["Flexible GPU: estimated starts", "GPU: h100-96 (flexible)", "Submitted batch job 123"])
+    assert P.started_gpu(["--gpus=flexible", "--time=00:45:00"], flexible) == "h100-96"
+    assert P.started_gpu(["--gpus=a100-40"], "Submitted batch job 123") == "a100-40"
+    assert P.started_gpu(["--time=00:45:00"], "Submitted batch job 123") == "default"
