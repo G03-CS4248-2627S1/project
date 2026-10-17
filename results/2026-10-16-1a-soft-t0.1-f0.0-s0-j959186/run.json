@@ -1,0 +1,11 @@
+{
+  "run_id": "2026-10-16-1a-soft-t0.1-f0.0-s0-j959186",
+  "experiment": "1a-soft",
+  "config_file": "configs/experiments/1a-soft.yaml",
+  "seed": 0,
+  "git_commit": "579228ed5d2b0ad3b8ed1be4b6b9a63d154e473e",
+  "git_dirty": false,
+  "slurm_job_id": "959186",
+  "host": "xgpg0",
+  "started": "2026-10-16T19:16:11"
+}

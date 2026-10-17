@@ -1,0 +1,38 @@
+{
+  "validation": {
+    "map": {
+      "exact": 73.72859366891541,
+      "f1": 87.03762090800413,
+      "total": 7708
+    },
+    "mbr": {
+      "exact": 73.71562013492475,
+      "f1": 87.11325820830523,
+      "total": 7708
+    }
+  },
+  "calibration": {
+    "temperature": 0.7054513043559099,
+    "nll_at_1": 1.3707373908567393,
+    "nll": 1.186079705697721,
+    "questions": 7681,
+    "left_out": 27,
+    "unit": "group"
+  },
+  "no_answer_validation": {
+    "questions": 7708,
+    "mean_p": 0.0013556956840281211,
+    "median_p": 8.608424382976616e-06,
+    "max_p": 0.9587882812000234,
+    "share_over_0.5": 0.0012973533990659055,
+    "share_above_top_span": 0.001427088738972496
+  },
+  "steps": 2487,
+  "train_minutes_last_job": 4.8,
+  "gpu": "NVIDIA H100 NVL MIG 3g.47gb",
+  "per_device_batch": 16,
+  "peak_gpu_gb": {
+    "train": 10.0,
+    "predict": 5.0
+  }
+}

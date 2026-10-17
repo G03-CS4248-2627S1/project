@@ -292,13 +292,15 @@ def test_conditional_loss_uses_only_windows_holding_the_answer():
     (["span_head=standard", "bilinear_form=dot"], ValueError),
     (["bilinear_form=cubic"], ValueError),
     (["bilinear_pos=learned"], ValueError),
-    (["f1_target_weight=0.3"], NotImplementedError),
-    (["risk_weight=0.1"], NotImplementedError),
-    (["risk_weight=0.1", "risk_em_weight=1.0"], NotImplementedError),
+    (["span_head=standard", "f1_target_weight=0.3"], ValueError),                     # 1a needs a span softmax
+    (["span_head=conditional", "risk_weight=0.1"], ValueError),
+    (["f1_target_weight=1.5"], ValueError),
+    (["f1_target_weight=0.5", "f1_target_temperature=0"], ValueError),
+    (["f1_target_floor=-0.1"], ValueError),
+    (["risk_weight=-1.0"], ValueError),
     (["risk_em_weight=1.0"], ValueError),                       # an EM weight for a risk loss that is off
     (["risk_weight=0.1", "risk_em_weight=-1.0"], ValueError),
     (["target_unit=answer"], ValueError),
-    (["span_head=compound", "target_unit=group", "f1_target_weight=0.3"], NotImplementedError),   # F1 part: 1a
     (["span_head=joint", "target_unit=group", "f1_target=positional"], ValueError),   # no variants to pool
     (["span_head=standard", "target_unit=group"], ValueError),                        # no span softmax
     (["W_init=random"], NotImplementedError),
@@ -306,6 +308,107 @@ def test_conditional_loss_uses_only_windows_holding_the_answer():
 def test_settings_that_are_not_built_or_do_not_apply_raise(overrides, error):
     with pytest.raises(error):
         H.check_head_config(load_config(None, overrides))
+
+
+@pytest.mark.parametrize("overrides", [
+    ["f1_target_weight=0.3"], ["risk_weight=0.1", "risk_em_weight=1.0"],
+    ["span_head=joint", "target_unit=group", "f1_target_weight=0.5", "risk_weight=1.0", "risk_em_weight=1.0"],
+])
+def test_the_1a_losses_are_accepted_on_span_softmax_heads(overrides):
+    H.check_head_config(load_config(None, overrides))
+
+
+# The F1-weighted target and the risk loss against brute force over passage spans (spec §4.3).
+
+def loss_batch():
+    """group_batch with what the 1a losses also read: window 1 starts at passage word 1."""
+    return {**group_batch(), "first_word": torch.tensor([0, 1]), "word_mask": torch.ones(2, 4, dtype=torch.bool)}
+
+
+def passage_entries(span):
+    """[(passage start, passage end, score)] of every valid window span; window w starts at word w."""
+    return [(i + w, j + w, float(span[w, i, j])) for w in range(2) for i in range(4) for j in range(4)
+            if torch.isfinite(span[w, i, j])]
+
+
+def brute_force_units(span, null, unit):
+    """{unit: (p(unit), F1, EM)} over distinct passage spans or groups, with each copy's probability."""
+    from squadqa.decode import group_keys, span_f1_em
+    flags = np.array(PASSAGE_CONTENT)
+    entries = passage_entries(span)
+    lse = torch.logsumexp(torch.tensor([s for _, _, s in entries] + [float(x) for x in null]), 0)
+    units: dict = {}
+    for a, b, s in entries:
+        key = group_keys(flags, np.array([a]), np.array([b]))[0] if unit == "group" else (a, b)
+        f1, em = span_f1_em(flags, a, b, 0, 2)
+        p = float(torch.exp(s - lse))
+        old = units.get(key, (0.0, float(f1), float(em)))
+        assert unit == "group" or old[1:] == (float(f1), float(em))
+        units[key] = (old[0] + p, float(f1), float(em))
+    return units, float(lse)
+
+
+def test_gold_f1_em_matches_decode_on_passage_coordinates():
+    from squadqa.decode import span_f1_em
+    span, batch = group_scores(), loss_batch()
+    f1, em = H.gold_f1_em(span, batch, 1, batch["content"])
+    for w in range(2):
+        for i in range(4):
+            for j in range(4):
+                if torch.isfinite(span[w, i, j]):
+                    want_f1, want_em = span_f1_em(np.array(PASSAGE_CONTENT), i + w, j + w, 0, 2)
+                    assert float(f1[w, i, j]) == pytest.approx(float(want_f1)) and float(em[w, i, j]) == want_em
+
+
+@pytest.mark.parametrize("unit", ["span", "group"])
+@pytest.mark.parametrize("floor", [0.0, 0.5])
+def test_f1_target_nll_counts_each_unit_once_and_sums_its_copies(unit, floor):
+    span, batch, null = group_scores(), loss_batch(), torch.tensor([0.3, -0.2])
+    tau = 0.3
+    loss, expected = H.f1_target_nll({"span": span, "null": null}, batch, 1, tau, floor, unit, batch["content"])
+    units, _ = brute_force_units(span, null, unit)
+    credited = {k: v for k, v in units.items() if v[1] > 0 and v[1] >= floor}
+    w = {k: np.exp(-(1 - f1) / tau) for k, (_, f1, _) in credited.items()}
+    z = sum(w.values())
+    want = -sum(w[k] / z * np.log(p) for k, (p, _, _) in credited.items())
+    assert float(loss[0]) == pytest.approx(want, rel=1e-5)
+    assert float(expected[0]) == pytest.approx(sum(w[k] / z * f1 for k, (_, f1, _) in credited.items()), rel=1e-5)
+
+
+def test_group_units_pool_the_boundary_variants():
+    span, batch = group_scores(), loss_batch()
+    by_span, _ = brute_force_units(span, [], "span")
+    by_group, _ = brute_force_units(span, [], "group")
+    assert len(by_group) < len(by_span)                         # variants of one answer share a unit
+    loss_span = H.f1_target_nll({"span": span}, batch, 1, 0.3, 0.0, "span", batch["content"])[0]
+    loss_group = H.f1_target_nll({"span": span}, batch, 1, 0.3, 0.0, "group", batch["content"])[0]
+    assert not torch.allclose(loss_span, loss_group)
+
+
+@pytest.mark.parametrize("em_weight", [0.0, 1.0])
+def test_risk_loss_is_the_expected_span_loss_and_the_null_is_wrong(em_weight):
+    span, batch, null = group_scores(1), loss_batch(), torch.tensor([0.3, -0.2])
+    risk = H.risk_loss({"span": span, "null": null}, batch, 1, em_weight, batch["content"])
+    units, lse = brute_force_units(span, null, "span")
+    want = sum(p * ((1 - f1) + em_weight * (1 - em)) for p, f1, em in units.values())
+    want += sum(float(torch.exp(x - lse)) for x in null) * (1 + em_weight)
+    assert float(risk[0]) == pytest.approx(want, rel=1e-5)
+
+
+def test_the_reader_mixes_the_parts_as_the_spec_says(tok):
+    torch.manual_seed(0)
+    cfg = load_config(None, ["span_head=joint", "no_answer=true", "target_unit=group", "f1_target_weight=0.5",
+                             "f1_target_temperature=0.3", "f1_target_floor=0.5", "risk_weight=2.0",
+                             "risk_em_weight=1.0", "train.head_dropout=0.0"])
+    model = H.Reader(tiny_encoder(), cfg).eval()
+    batch = D.collate(D.featurize(D.load_split("train")[:3], tok, cfg, training=True).batch([0, 1, 2]), tok.pad_token_id)
+    with torch.no_grad():
+        out = model(batch)
+        em_part = H.group_nll(out, batch, 3)
+        f1_part, _ = H.f1_target_nll(out, batch, 3, 0.3, 0.5, "group", batch["content"])
+        risk = H.risk_loss(out, batch, 3, 1.0, batch["content"])
+        assert torch.allclose(model.loss(batch, 3), 0.5 * em_part + 0.5 * f1_part + 2.0 * risk, atol=1e-5)
+    assert 0 < model.stats["t_f1_expected_f1"] <= 1
 
 
 def test_old_run_configs_get_the_settings_they_were_trained_with():
@@ -324,6 +427,11 @@ HEAD_CONFIGS = {
     "compound": ["span_head=compound", "bilinear_pos=additive"],
     "compound-rotary": ["span_head=compound", "bilinear_pos=rotary"],
     "joint-group": ["span_head=joint", "length_bias=false", "target_unit=group"],
+    "joint-soft-group": ["span_head=joint", "length_bias=false", "target_unit=group", "f1_target_weight=0.5",
+                         "f1_target_temperature=0.3", "f1_target_floor=0.5"],
+    "joint-risk-group": ["span_head=joint", "length_bias=false", "target_unit=group", "risk_weight=1.0",
+                         "risk_em_weight=1.0"],
+    "compound-soft-risk": ["span_head=compound", "f1_target_weight=0.3", "risk_weight=0.3"],
 }
 
 

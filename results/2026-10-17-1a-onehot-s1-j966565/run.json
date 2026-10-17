@@ -1,0 +1,11 @@
+{
+  "run_id": "2026-10-17-1a-onehot-s1-j966565",
+  "experiment": "1a-onehot",
+  "config_file": "configs/experiments/1a-onehot.yaml",
+  "seed": 1,
+  "git_commit": "579228ed5d2b0ad3b8ed1be4b6b9a63d154e473e",
+  "git_dirty": false,
+  "slurm_job_id": "966565",
+  "host": "xgpi1",
+  "started": "2026-10-17T20:47:37"
+}

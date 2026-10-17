@@ -1,0 +1,9 @@
+# E1 (#49), cells C and D: the F1-weighted soft target on the joint-plain head, per group of boundary
+# variants (spec §4.3). alpha = 1/(1 + r) = 0.5 for the shared EM:F1 ratio r = 1, the same r as MBR's
+# gamma = 1 (base.yaml). tau and the floor phi are swept with --set (slurm/e1_runs.sh).
+model: microsoft/deberta-v3-base
+span_head: joint
+length_bias: false
+no_answer: true
+target_unit: group
+f1_target_weight: 0.5
