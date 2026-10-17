@@ -1,0 +1,38 @@
+{
+  "validation": {
+    "map": {
+      "exact": 74.5588998443176,
+      "f1": 87.38208281319598,
+      "total": 7708
+    },
+    "mbr": {
+      "exact": 74.62376751427088,
+      "f1": 87.59559548781947,
+      "total": 7708
+    }
+  },
+  "calibration": {
+    "temperature": 1.1333087002126305,
+    "nll_at_1": 1.1859677345707156,
+    "nll": 1.170768971687552,
+    "questions": 7679,
+    "left_out": 29,
+    "unit": "span"
+  },
+  "no_answer_validation": {
+    "questions": 7708,
+    "mean_p": 0.0008885088020849744,
+    "median_p": 0.00016253098215090724,
+    "max_p": 0.27505093257759505,
+    "share_over_0.5": 0.0,
+    "share_above_top_span": 0.0022055007784120392
+  },
+  "steps": 2487,
+  "train_minutes_last_job": 8.5,
+  "gpu": "NVIDIA A100-PCIE-40GB",
+  "per_device_batch": 16,
+  "peak_gpu_gb": {
+    "train": 10.0,
+    "predict": 4.9
+  }
+}

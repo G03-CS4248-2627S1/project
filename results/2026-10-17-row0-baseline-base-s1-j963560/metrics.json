@@ -1,0 +1,30 @@
+{
+  "validation": {
+    "map": {
+      "exact": 73.72859366891541,
+      "f1": 87.29060273941896,
+      "total": 7708
+    },
+    "mbr": {
+      "exact": 73.6377789309808,
+      "f1": 87.39795242302743,
+      "total": 7708
+    }
+  },
+  "calibration": {
+    "temperature": 1.245026265106569,
+    "nll_at_1": 1.3408201158113273,
+    "nll": 1.295581088794748,
+    "questions": 7679,
+    "left_out": 29,
+    "unit": "span"
+  },
+  "steps": 2487,
+  "train_minutes_last_job": 8.5,
+  "gpu": "NVIDIA A100-PCIE-40GB",
+  "per_device_batch": 16,
+  "peak_gpu_gb": {
+    "train": 10.0,
+    "predict": 4.9
+  }
+}

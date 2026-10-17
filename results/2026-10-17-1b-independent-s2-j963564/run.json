@@ -1,0 +1,11 @@
+{
+  "run_id": "2026-10-17-1b-independent-s2-j963564",
+  "experiment": "1b-independent",
+  "config_file": "configs/experiments/1b-independent.yaml",
+  "seed": 2,
+  "git_commit": "bf4fc100d0af8691278b2d40116c626875806788",
+  "git_dirty": false,
+  "slurm_job_id": "963564",
+  "host": "xgpg2",
+  "started": "2026-10-17T14:51:06"
+}
