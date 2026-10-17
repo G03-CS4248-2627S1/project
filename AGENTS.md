@@ -123,6 +123,7 @@ Mistakes assistants made in this project, kept so nobody repeats them. Add to th
   - transformers 5 removed `build_inputs_with_special_tokens`; use `squadqa.data.pair_layout`.
   - `load_dotenv()` with no path fails in code run from stdin (`python - <<EOF`); pass `".env"`.
   - On Windows, set `PYTHONIOENCODING=utf-8` before printing non-ASCII text, or Python raises `UnicodeEncodeError`.
+  - Git Bash's `grep` can't detect carriage returns: `grep -c $'\r'` gives 0 even on a CRLF file, and typed inline into an agent's shell tool it once counted every line. Count them with Python: `python -c "import sys; print(open(sys.argv[1], 'rb').read().count(b'\r'))" <file>`. An assistant reported a GitHub issue body as CRLF this way (2026-10-17).
   - YAML 1.1 reads `3e-5` as a string. Write `3.0e-5` in YAML files; `--set train.lr=3e-5` is converted for you, and a wrong type raises.
   - In tests, compute hand-made word indices from the text, and compare float32 values with `pytest.approx`.
 
