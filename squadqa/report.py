@@ -1,0 +1,228 @@
+"""Reports over finished runs, decode-only on the CPU (spec §6): calibration error, top-k recall,
+and comparisons of systems over seeds.
+
+Per run, from results/<run_id>/: its config, calibration.json, candidates_<split>.json and MAP
+predictions. Candidates are not committed (workflow.md §2.2), so a run is reported where its
+candidates are: the machine that fetched it. The report records:
+- T, and the NLL of the gold at T and at 1, from calibration.json.
+- ECE of the MAP answer (Guo et al., 2017): the answer's probability, the summed probability of
+  the chosen group among the saved top-k candidates at T (decode.answer_groups under the run's
+  mbr_utility), in 10 equal-width bins, against its official EM. A group can have members below
+  the top k, so this probability is a lower bound.
+- Top-k recall for k in 1, 5, 10 (up to the saved k): the share of questions where some top-k
+  candidate has official EM 1 against a reference. It caps a verifier that picks among them.
+
+A system is one decoding rule over the runs (seeds) of one config, written name=rule:run,run,...
+compare gives each system's EM, F1 and EM + F1 as mean ± sample std over its runs, the mean of
+its runs' reports where they exist, and paired bootstrap 95% intervals (evaluate.paired_bootstrap)
+for contrasts: signed sums of systems, such as B-A, or D+A-B-C for an interaction. A contrast
+uses per-question scores averaged over each system's runs and resamples questions, so its
+interval covers question sampling; the seed spread is the std.
+
+    python -m squadqa.report run <run_id>...        # writes results/<run_id>/report_validation.json
+    python -m squadqa.report compare A=map:<run>,<run> B=mbr:<run>,<run> --contrast B-A [-o out.json]
+
+Run from the repo root, like every entry point.
+"""
+
+import argparse
+import json
+import re
+import statistics
+from collections.abc import Mapping, Sequence
+from pathlib import Path
+
+import numpy as np
+
+from squadqa import evaluate as E
+from squadqa.config import RESULTS, write_json
+from squadqa.data import word_spans
+from squadqa.decode import Candidates, answer_groups, answer_text, content_flags
+
+BINS = 10
+RECALL_KS = (1, 5, 10)
+NAME = r"[A-Za-z0-9_]+"
+
+
+def ece(confidence: Sequence[float], correct: Sequence[float], bins: int = BINS) -> float:
+    """Expected calibration error: |accuracy - mean confidence| per equal-width bin of confidence,
+    weighted by the bin's share of questions. A confidence of exactly 1 falls in the last bin."""
+    conf = np.asarray(confidence, dtype=np.float64)
+    ok = np.asarray(correct, dtype=np.float64)
+    if conf.ndim != 1 or conf.shape != ok.shape or not len(conf):
+        raise ValueError("confidence and correct must be non-empty and of the same length")
+    if ((conf < 0) | (conf > 1)).any():
+        raise ValueError("confidences must lie in [0, 1]")
+    b = np.minimum((conf * bins).astype(int), bins - 1)
+    return float(sum((b == k).mean() * abs(ok[b == k].mean() - conf[b == k].mean())
+                     for k in range(bins) if (b == k).any()))
+
+
+def question_diagnostics(context: str, golds: Sequence[str], cands: Sequence[Sequence[float]], utility: str,
+                         ks: Sequence[int] = RECALL_KS) -> tuple[str, float, list[bool]]:
+    """One question's MAP answer text, its probability, and for each k whether some top-k candidate
+    has official EM 1 against a gold answer. cands: [[start_word, end_word, logp], ...] as saved by
+    squadqa.predict, most probable first."""
+    words = word_spans(context)
+    arr = np.asarray(cands, dtype=np.float64)
+    c = Candidates(arr[:, 0].astype(np.int64), arr[:, 1].astype(np.int64), arr[:, 2])
+    texts = [answer_text(context, words, int(i), int(j)) for i, j in zip(c.starts, c.ends)]
+    rep, prob = answer_groups(c, content_flags(context, words), utility, texts)
+    best = int(np.argmax(prob))
+    hit = [max(E.scorer().compute_exact(g, t) for g in golds) for t in texts]
+    return texts[rep[best]], float(min(prob[best], 1.0)), [any(hit[:k]) for k in ks]
+
+
+def run_report(run_id: str, split: str = "validation") -> dict:
+    """Calibration and top-k recall of one run (see the module docstring)."""
+    from squadqa.predict import run_config
+
+    run_dir = RESULTS / run_id
+    cfg = run_config(run_id)
+    cal = json.loads((run_dir / "calibration.json").read_text(encoding="utf-8"))
+    cands_path = run_dir / f"candidates_{split}.json"
+    if not cands_path.exists():
+        raise FileNotFoundError(f"{cands_path} is missing; candidates stay on the machine that fetched the run")
+    cands = json.loads(cands_path.read_text(encoding="utf-8"))
+    preds = E.load_predictions(run_dir / f"predictions_{split}_map.json")
+    dataset = E.load_eval_set(split)
+    exact, _ = E.per_question(dataset, preds)
+    ks = [k for k in RECALL_KS if k <= cfg["decode_topk"]]
+    conf, correct, recall, differ = [], [], [], 0
+    for article in dataset:
+        for p in article["paragraphs"]:
+            for qa in p["qas"]:
+                text, prob, rec = question_diagnostics(p["context"], [a["text"] for a in qa["answers"]],
+                                                       cands[qa["id"]], cfg["mbr_utility"], ks)
+                differ += text != preds[qa["id"]]          # near-ties: the saved logp are rounded
+                conf.append(prob)
+                correct.append(exact[qa["id"]])
+                recall.append(rec)
+    if differ > 0.001 * len(conf):
+        raise RuntimeError(f"{run_id}: the MAP answer rebuilt from the candidates differs from the saved one "
+                           f"on {differ} of {len(conf)} questions; wrong mbr_utility or candidates?")
+    rec = np.array(recall)
+    return {"split": split, "questions": len(conf), "temperature": cal["temperature"],
+            "nll": cal["nll"], "nll_at_1": cal["nll_at_1"], "calibration_unit": cal.get("unit", "span"),
+            "ece_map": ece(conf, correct), "ece_bins": BINS,
+            "mean_confidence_map": float(np.mean(conf)), "accuracy_map": float(np.mean(correct)),
+            "topk_recall": {str(k): float(rec[:, n].mean()) for n, k in enumerate(ks)},
+            "map_rebuilt_differs": differ}
+
+
+def parse_system(spec: str) -> tuple[str, str, list[str]]:
+    """'B=mbr:run1,run2' -> ('B', 'mbr', ['run1', 'run2'])."""
+    m = re.fullmatch(rf"({NAME})=(map|mbr):([^,]+(?:,[^,]+)*)", spec)
+    if not m:
+        raise ValueError(f"a system is name=map|mbr:run,run,... (name of letters, digits, _), got {spec!r}")
+    return m[1], m[2], m[3].split(",")
+
+
+def parse_contrast(expr: str, names: Sequence[str]) -> dict[str, int]:
+    """'D+A-B-C' -> {'D': 1, 'A': 1, 'B': -1, 'C': -1}; a repeated name adds up."""
+    if not re.fullmatch(rf"[+-]?{NAME}(?:[+-]{NAME})*", expr):
+        raise ValueError(f"a contrast is a signed sum of system names, such as B-A or D+A-B-C; got {expr!r}")
+    signs: dict[str, int] = {}
+    for sign, name in re.findall(rf"([+-]?)({NAME})", expr):
+        if name not in names:
+            raise ValueError(f"contrast {expr!r} names {name!r}, which is not a system")
+        signs[name] = signs.get(name, 0) + (-1 if sign == "-" else 1)
+    return signs
+
+
+def signed_sums(per: Mapping[str, Mapping[str, float]], signs: Mapping[str, int]) -> tuple[dict, dict]:
+    """Per-question sums of the negative and of the positive terms of a contrast, so that
+    paired_bootstrap(neg, pos) estimates the contrast."""
+    keys = next(iter(per.values())).keys()
+    neg = {k: sum(-s * per[n][k] for n, s in signs.items() if s < 0) for k in keys}
+    pos = {k: sum(s * per[n][k] for n, s in signs.items() if s > 0) for k in keys}
+    return neg, pos
+
+
+def _stats(values: Sequence[float]) -> dict:
+    return {"mean": statistics.mean(values), "std": statistics.stdev(values) if len(values) > 1 else 0.0,
+            "n": len(values)}
+
+
+def compare(systems: Sequence[tuple[str, str, list[str]]], contrasts: Sequence[str], split: str = "validation",
+            resamples: int = 10_000) -> dict:
+    """Each system's scores over its runs and the contrasts' bootstrap intervals (module docstring)."""
+    if len({name for name, _, _ in systems}) != len(systems):
+        raise ValueError("system names must differ")
+    dataset = E.load_eval_set(split)
+    out: dict = {"split": split, "systems": {}, "contrasts": {}}
+    per: dict[str, dict[str, dict[str, float]]] = {"exact": {}, "f1": {}, "exact_plus_f1": {}}
+    for name, rule, runs in systems:
+        ems, f1s, rows, reports = [], [], [], []
+        for run in runs:
+            em, f1 = E.per_question(dataset, E.load_predictions(RESULTS / run / f"predictions_{split}_{rule}.json"))
+            s = E.summarize(em, f1)
+            ems.append(em)
+            f1s.append(f1)
+            rows.append({"run": run, "exact": s["exact"], "f1": s["f1"]})
+            path = RESULTS / run / f"report_{split}.json"
+            if path.exists():
+                reports.append(json.loads(path.read_text(encoding="utf-8")))
+        sys_out = {"rule": rule, "runs": rows,
+                   "exact": _stats([r["exact"] for r in rows]), "f1": _stats([r["f1"] for r in rows]),
+                   "exact_plus_f1": _stats([r["exact"] + r["f1"] for r in rows])}
+        if reports and len(reports) == len(runs):
+            sys_out["report"] = {key: _stats([r[key] for r in reports]) for key in ("temperature", "nll", "ece_map")}
+            sys_out["report"]["topk_recall"] = {k: _stats([r["topk_recall"][k] for r in reports])
+                                                for k in reports[0]["topk_recall"]}
+        out["systems"][name] = sys_out
+        em_mean, f1_mean = E.mean_over_seeds(ems), E.mean_over_seeds(f1s)
+        per["exact"][name], per["f1"][name] = em_mean, f1_mean
+        per["exact_plus_f1"][name] = {k: em_mean[k] + f1_mean[k] for k in em_mean}
+    for expr in contrasts:
+        signs = parse_contrast(expr, list(out["systems"]))
+        out["contrasts"][expr] = {metric: E.paired_bootstrap(*signed_sums(scores, signs), resamples)
+                                  for metric, scores in per.items()}
+    return out
+
+
+def markdown(result: dict) -> str:
+    """The systems and contrasts as two Markdown tables."""
+    def ms(s: dict) -> str:
+        return f"{s['mean']:.2f} ± {s['std']:.2f}"
+
+    lines = ["| System | Rule | Runs | EM | F1 | EM + F1 |", "|---|---|---|---|---|---|"]
+    for name, s in result["systems"].items():
+        lines.append(f"| {name} | {s['rule'].upper()} | {len(s['runs'])} | {ms(s['exact'])} | {ms(s['f1'])} "
+                     f"| {ms(s['exact_plus_f1'])} |")
+    lines += ["", "| Contrast | EM | F1 | EM + F1 |", "|---|---|---|---|"]
+    for expr, c in result["contrasts"].items():
+        cells = [f"{c[m]['diff']:+.2f} [{c[m]['ci95'][0]:+.2f}, {c[m]['ci95'][1]:+.2f}]"
+                 for m in ("exact", "f1", "exact_plus_f1")]
+        lines.append(f"| {expr} | " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Decode-only reports over finished runs.")
+    sub = parser.add_subparsers(dest="command", required=True)
+    run = sub.add_parser("run", help="calibration and top-k recall per run")
+    run.add_argument("runs", nargs="+", metavar="RUN_ID")
+    run.add_argument("--split", default="validation")
+    cmp_ = sub.add_parser("compare", help="systems over seeds, and bootstrap intervals for contrasts")
+    cmp_.add_argument("systems", nargs="+", metavar="NAME=RULE:RUN,RUN")
+    cmp_.add_argument("--contrast", action="append", default=[], help="a signed sum of systems, e.g. B-A")
+    cmp_.add_argument("--resamples", type=int, default=10_000)
+    cmp_.add_argument("-o", "--out", help="also write the result as JSON here")
+    args = parser.parse_args(argv)
+    if args.command == "run":
+        for run_id in args.runs:
+            rep = run_report(run_id, args.split)
+            write_json(RESULTS / run_id / f"report_{args.split}.json", rep)
+            recall = ", ".join(f"@{k} {v:.3f}" for k, v in rep["topk_recall"].items())
+            print(f"{run_id}: T {rep['temperature']:.3f}, NLL {rep['nll']:.3f}, ECE {rep['ece_map']:.4f}, "
+                  f"recall {recall}")
+    else:
+        result = compare([parse_system(s) for s in args.systems], args.contrast, resamples=args.resamples)
+        if args.out:
+            write_json(Path(args.out), result)
+        print(markdown(result))
+
+
+if __name__ == "__main__":
+    main()

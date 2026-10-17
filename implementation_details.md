@@ -392,6 +392,11 @@ Not the default: the default candidates are sampled from the final reader (§5.1
   - *Boundary fix:* the answers overlap but differ after normalization.
   - *Answer switch:* the answers do not overlap.
 - Report per-seed results, mean ± std over 3 seeds, and paired bootstrap 95% confidence intervals for headline differences.
+  - `python -m squadqa.report compare` does both for systems (a decoding rule over a config's seeds) and for contrasts, signed sums of systems such as `B-A` or the interaction `D+A-B-C`. A contrast's interval comes from resampling questions, on per-question scores averaged over each system's seeds; the seed spread is the std.
+- **Calibration and top-k recall per run** (`python -m squadqa.report run <run_id>`, decode-only, from the run's saved candidates; writes `results/<run_id>/report_<split>.json`):
+  - *ECE* of the MAP answer (Guo et al., 2017): the answer's probability, the summed probability of its group among the saved top-k candidates at the run's temperature (grouped as the run decodes, `decode.answer_groups`), in 10 equal-width bins, against its official EM. Members below the top k are missing, so the probability is a lower bound.
+  - *Top-k recall*, k = 1, 5, 10: the share of questions where some top-k candidate has official EM 1 against a reference (the ceiling of a verifier that picks among them, §5).
+  - Also T and the gold's NLL at T, from `calibration.json`.
 - Score every frozen system on dev, Adversarial SQuAD (AddSent, AddOneSent) and the four SQuAD-Shifts sets, and report each separately.
 - **Adversarial SQuAD** (`data/external/adversarial_squad/`): each file holds 1,000 dev-v1.1 questions unchanged plus adversarial versions whose ids add a suffix (`-high-conf-turk0`, …).
   - Main number, Jia & Liang's adversarial score, with the grouping of the authors' `eval_squad.py` (CodaLab bundle `0xc2824269ba0a4179ac63c08fd3997d1c`, checked 2026-10-04; `squadqa.evaluate.adversarial_groups`). Group questions by the id prefix before the first `-`. In a group with adversarial versions (787 of the 1,000), the original is not used: take the version with the lowest F1 (the first in file order on ties) and that version's EM, so EM is not minimized separately. A group without versions keeps its original. Average over the 1,000 groups.

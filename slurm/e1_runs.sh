@@ -9,6 +9,7 @@
 #   bash slurm/e1_runs.sh list                 # the runs, and the command each would submit
 #   bash slurm/e1_runs.sh smoke                # the new losses first (spec §9): stop at 30, resume, predict
 #   POOL_BRANCH=<results branch> bash slurm/e1_runs.sh pool-json > pool.json   # the runs as a task pool
+#   bash slurm/e1_runs.sh report [-o e1.json]  # after the runs, on CPU: calibration, top-k recall, the six cells
 #
 # GPUS (default a100-40) and TIME (default 00:45:00; a base run takes about 15 minutes) set the request.
 set -euo pipefail
@@ -77,6 +78,18 @@ case "${1:-}" in
         "${tag:+, \"TAG\": \"$tag\"}" "$args_json" "$([ "$k" -lt "$n" ] && echo ,)"
     done
     printf '}}\n' ;;
+  report)
+    # Decode-only, on this machine, with every run's candidates_validation.json in results/ (they
+    # are not committed): a report per E1 run (T, NLL, ECE, top-k recall), then the six cells on
+    # the confirmation seeds 1-3 with the contrasts for H1-H3 (squadqa.report). The soft-target
+    # and risk settings are the ones seed 0 picked (#49). Extra arguments go to compare (-o out.json).
+    shift
+    cells() { ls -d results/*-"$1"-s[123]-j* | xargs -n1 basename | paste -sd, -; }
+    onehot=$(cells 1a-onehot); soft=$(cells 1a-soft-t0.3-f0.0); risk=$(cells 1a-risk-b1.0)
+    python -m squadqa.report run $(ls -d results/*-1a-*-s[0-9]-j* | xargs -n1 basename)
+    python -m squadqa.report compare A=map:"$onehot" B=mbr:"$onehot" C=map:"$soft" D=mbr:"$soft" \
+      E=map:"$risk" F=mbr:"$risk" --contrast B-A --contrast C-A --contrast E-A --contrast C-B \
+      --contrast E-B --contrast F-B --contrast D+A-B-C --contrast F+A-B-E "$@" ;;
   *)
     sed -n '2,14p' "$0"; exit 1 ;;
 esac

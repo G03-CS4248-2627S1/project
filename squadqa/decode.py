@@ -227,26 +227,15 @@ def string_f1_em(texts: list[str]) -> tuple[np.ndarray, np.ndarray]:
     return np.where(apart, 0.0, f1), np.where(apart, 0.0, em)
 
 
-def decode(cands: Candidates, flags: np.ndarray, rule: str, utility: str, em_weight: float = 1.0,
-           texts: list[str] | None = None) -> tuple[int, int]:
-    """The chosen span (i, j) among the candidates.
-
-    utility "normalized": candidates are grouped by the content words they cover (boundary
-    variants), a group's probability is the sum of its members', F1 and EM are content-word
-    versions, and the answer is the chosen group's most probable span. "positional": every
-    span is its own group, with plain positional word F1 and EM = identical spans. "string":
-    candidates are grouped by the official normalization of their texts (texts: each
-    candidate's passage text, in candidate order) at any position, with the scorer's F1 and EM;
-    a text that normalizes to nothing is its own group.
-    rule "map": the most probable group. "mbr": argmax over groups y of
-    sum over groups y' of p(y') * (F1(y, y') + em_weight * EM(y, y')).
-    """
+def answer_groups(cands: Candidates, flags: np.ndarray, utility: str,
+                  texts: list[str] | None = None) -> tuple[np.ndarray, np.ndarray]:
+    """The candidates' answers under utility (see decode): for each group, its most probable
+    member (an index into the candidates) and its probability, the sum of its members'. Groups
+    come in the order of their most probable member."""
     if utility == "normalized":
         keys = group_keys(flags, cands.starts, cands.ends)
-        used = flags
     elif utility == "positional":
         keys = list(zip(cands.starts.tolist(), cands.ends.tolist()))
-        used = np.ones_like(flags)
     elif utility == "string":
         if texts is None or len(texts) != len(cands.starts):
             raise ValueError("mbr_utility 'string' needs the text of every candidate")
@@ -262,15 +251,31 @@ def decode(cands: Candidates, flags: np.ndarray, rule: str, utility: str, em_wei
     for c, key in enumerate(keys):                          # candidates are most probable first
         first.setdefault(key, c)
         mass[key] = mass.get(key, 0.0) + float(p[c])
-    groups = list(first)
-    rep = np.array([first[g] for g in groups])
-    prob = np.array([mass[g] for g in groups])
+    return np.array([first[g] for g in first]), np.array([mass[g] for g in first])
+
+
+def decode(cands: Candidates, flags: np.ndarray, rule: str, utility: str, em_weight: float = 1.0,
+           texts: list[str] | None = None) -> tuple[int, int]:
+    """The chosen span (i, j) among the candidates.
+
+    utility "normalized": candidates are grouped by the content words they cover (boundary
+    variants), a group's probability is the sum of its members', F1 and EM are content-word
+    versions, and the answer is the chosen group's most probable span. "positional": every
+    span is its own group, with plain positional word F1 and EM = identical spans. "string":
+    candidates are grouped by the official normalization of their texts (texts: each
+    candidate's passage text, in candidate order) at any position, with the scorer's F1 and EM;
+    a text that normalizes to nothing is its own group.
+    rule "map": the most probable group. "mbr": argmax over groups y of
+    sum over groups y' of p(y') * (F1(y, y') + em_weight * EM(y, y')).
+    """
+    rep, prob = answer_groups(cands, flags, utility, texts)
     if rule == "map":
         best = int(np.argmax(prob))
     elif rule == "mbr":
         if utility == "string":
             f1, em = string_f1_em([texts[r] for r in rep])
         else:
+            used = flags if utility == "normalized" else np.ones_like(flags)
             s, e = cands.starts[rep], cands.ends[rep]
             f1, em = span_f1_em(used, s[:, None], e[:, None], s[None, :], e[None, :])
         best = int(np.argmax((f1 + em_weight * em) @ prob))
