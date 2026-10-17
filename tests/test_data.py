@@ -41,15 +41,14 @@ WINDOW_CASES = [(10, 20, 5), (20, 20, 5), (21, 20, 5), (24, 20, 5), (26, 20, 5),
 
 
 @pytest.mark.parametrize("n, budget, stride", WINDOW_CASES)
-def test_even_windows_are_full_spread_evenly_and_as_few_as_the_stride_allows(n, budget, stride):
+def test_even_windows_are_full_spread_evenly_and_as_many_as_left(n, budget, stride):
     ranges = D.window_ranges(n, budget, stride, "even")
     assert ranges[0][0] == 0 and ranges[-1][1] == n
     assert all(b - a == min(budget, n) for a, b in ranges)          # every window full
-    steps = [a1 - a0 for (a0, _), (a1, _) in zip(ranges, ranges[1:])]
-    assert all(0 < s <= stride for s in steps)
-    assert not steps or max(steps) - min(steps) <= 1                 # spread evenly
-    assert len(ranges) == 1 or n - budget > stride * (len(ranges) - 2)   # one window fewer would need a longer step
-    assert all(b0 - a1 >= budget - stride for (_, b0), (a1, _) in zip(ranges, ranges[1:]))
+    assert len(ranges) == len(D.window_ranges(n, budget, stride, "left"))
+    overlaps = [b0 - a1 for (_, b0), (a1, _) in zip(ranges, ranges[1:])]
+    assert all(stride <= o < budget for o in overlaps)
+    assert not overlaps or max(overlaps) - min(overlaps) <= 1       # spread evenly
 
 
 @pytest.mark.parametrize("n, budget, stride", WINDOW_CASES)
@@ -159,13 +158,13 @@ def test_round_trip_on_validation(val_feats):
 
 def test_even_windows_on_validation(val_feats, val_feats_left):
     """Every window of a question has the same length (all full), the first starts at the passage's
-    first word and the last ends at its last, and no question has fewer windows than under left."""
+    first word and the last ends at its last, and each question has as many windows as under left."""
     multi = 0
     for ex, ex_left in zip(val_feats.examples, val_feats_left.examples):
         wins = [val_feats.windows[w] for w in ex.windows]
         assert len({len(w.input_ids) for w in wins}) == 1
         assert wins[0].first_word == 0 and wins[-1].first_word + wins[-1].n_words == len(ex.context.words)
-        assert len(wins) >= len(ex_left.windows)
+        assert len(wins) == len(ex_left.windows)
         multi += len(wins) > 1
     assert 50 < multi < 150
 

@@ -195,10 +195,10 @@ def window_ranges(n_tokens: int, budget: int, stride: int, window_layout: str = 
     """[start, end) passage-token ranges of at most `budget` tokens, together covering the whole
     passage (spec §3.3).
 
-    even: the fewest windows whose consecutive starts are at most `stride` tokens apart, each
-    `budget` tokens long (the whole passage if it is shorter), with the starts spread evenly from 0
-    to n_tokens - budget. So the last window ends at the passage's end, and consecutive windows
-    overlap by at least budget - stride tokens, the overlaps within 1 token of each other.
+    even: as many windows as left gives, the fewest whose consecutive windows overlap by at least
+    `stride` tokens, each `budget` tokens long (the whole passage if it is shorter), with the starts
+    spread evenly from 0 to n_tokens - budget. So the last window ends at the passage's end, and the
+    overlaps, at least `stride` tokens, are within 1 token of each other.
     left (runs before window_layout existed): from the left, consecutive windows overlapping by
     exactly `stride` tokens, the last one holding the rest of the passage, so it can be as short as
     stride + 1 tokens. These are return_overflowing_tokens' windows, whose stride is the overlap,
@@ -217,7 +217,7 @@ def window_ranges(n_tokens: int, budget: int, stride: int, window_layout: str = 
         return [(0, n_tokens)]
     if window_layout == "even":
         span = n_tokens - budget
-        steps = -(-span // stride)                                   # the fewest steps of at most stride tokens
+        steps = -(-span // (budget - stride))                        # the fewest steps of at most budget - stride tokens
         starts = [(2 * m * span + steps) // (2 * steps) for m in range(steps + 1)]   # m * span / steps, rounded
         return [(s, s + budget) for s in starts]
     out, start = [], 0
