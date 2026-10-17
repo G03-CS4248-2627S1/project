@@ -4,7 +4,8 @@
 model: microsoft/deberta-v3-large      # development: microsoft/deberta-v3-base
 precision: bf16                        # bf16 autocast compute, fp32 master weights and optimizer state (§9); fp16 can be unstable with DeBERTa-v3
 max_seq_len: 384
-doc_stride: 128
+doc_stride: 128                        # window_layout even: the most passage tokens between consecutive window starts; left: the overlap (§3.3)
+window_layout: even                    # even = the fewest full windows whose starts are at most doc_stride apart, spread evenly over the passage | left = runs before 17 Oct 2026: from the left, overlapping by doc_stride, the last window holding the rest (§3.3)
 padding: dynamic                       # pad to longest in batch; batch by similar length
 max_answer_words: 30                   # L; every dev question has a reference of ≤ 28 words
 span_head: compound                    # Fajcik et al. (2021) objectives: compound (row 1+; I+J) = joint + auxiliary independent loss | joint (J; P2 ablation) | conditional (JC; 1b test) | standard (I; row 0)

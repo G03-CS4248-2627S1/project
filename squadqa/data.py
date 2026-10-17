@@ -186,19 +186,40 @@ def _context_tokens(context: str, ids: list[int], offsets: list[tuple[int, int]]
     return ContextTokens(words, ids, spans, first, last)
 
 
-# Windows (spec §3.4).
+# Windows (spec §3.3-3.4).
 
-def window_ranges(n_tokens: int, budget: int, stride: int) -> list[tuple[int, int]]:
-    """[start, end) passage-token ranges of at most `budget` tokens, consecutive ones overlapping
-    by `stride` tokens, together covering the whole passage.
+WINDOW_LAYOUTS = ("even", "left")
+
+
+def window_ranges(n_tokens: int, budget: int, stride: int, window_layout: str = "even") -> list[tuple[int, int]]:
+    """[start, end) passage-token ranges of at most `budget` tokens, together covering the whole
+    passage (spec §3.3).
+
+    even: the fewest windows whose consecutive starts are at most `stride` tokens apart, each
+    `budget` tokens long (the whole passage if it is shorter), with the starts spread evenly from 0
+    to n_tokens - budget. So the last window ends at the passage's end, and consecutive windows
+    overlap by at least budget - stride tokens, the overlaps within 1 token of each other.
+    left (runs before window_layout existed): from the left, consecutive windows overlapping by
+    exactly `stride` tokens, the last one holding the rest of the passage, so it can be as short as
+    stride + 1 tokens. These are return_overflowing_tokens' windows, whose stride is the overlap,
+    where that covers the whole passage.
 
     Built here rather than by the tokenizer's return_overflowing_tokens: tokenizers 0.23
     (every release through 0.23.2; 0.22.2 is correct) returns at most two windows for a
     (question, passage) pair, so the end of a long passage is lost (528 train and 146 dev
     questions; checked 2026-10-04).
     """
-    if budget <= stride:
-        raise ValueError(f"window budget {budget} must exceed the stride {stride}")
+    if not 0 < stride < budget:
+        raise ValueError(f"the stride {stride} must be positive and below the window budget {budget}")
+    if window_layout not in WINDOW_LAYOUTS:
+        raise ValueError(f"unknown window_layout {window_layout!r}; choose from {WINDOW_LAYOUTS}")
+    if n_tokens <= budget:
+        return [(0, n_tokens)]
+    if window_layout == "even":
+        span = n_tokens - budget
+        steps = -(-span // stride)                                   # the fewest steps of at most stride tokens
+        starts = [(2 * m * span + steps) // (2 * steps) for m in range(steps + 1)]   # m * span / steps, rounded
+        return [(s, s + budget) for s in starts]
     out, start = [], 0
     while True:
         end = min(start + budget, n_tokens)
@@ -240,8 +261,9 @@ def pair_layout(tokenizer) -> tuple[list[int], list[int], list[int]]:
 
 
 def make_windows(question_ids: list[int], ctx: ContextTokens, layout: tuple[list[int], list[int], list[int]],
-                 max_seq_len: int, stride: int, example: int = 0) -> list[Window]:
-    """The windows of one question: layout = pair_layout(tokenizer).
+                 max_seq_len: int, stride: int, example: int = 0, window_layout: str = "even") -> list[Window]:
+    """The windows of one question: layout = pair_layout(tokenizer); stride and window_layout as in
+    window_ranges.
 
     A window keeps only the passage words whose tokens are all inside it (a contiguous run).
     gold is left as None; featurize fills it in.
@@ -251,7 +273,7 @@ def make_windows(question_ids: list[int], ctx: ContextTokens, layout: tuple[list
     offset = len(head)                                  # position of the first passage token
     budget = max_seq_len - offset - len(after)
     out = []
-    for a, b in window_ranges(len(ctx.ids), budget, stride):
+    for a, b in window_ranges(len(ctx.ids), budget, stride, window_layout):
         w0 = int(np.searchsorted(ctx.word_first, a))                # first word starting at or after a
         w1 = int(np.searchsorted(ctx.word_last, b)) - 1             # last word ending before b
         if w1 < w0:
@@ -290,7 +312,8 @@ class Features:
 
 
 def featurize(questions: list[Question], tokenizer, cfg: dict, training: bool) -> Features:
-    """Windows of cfg["max_seq_len"] tokens overlapping by cfg["doc_stride"] (spec §3.3-3.4).
+    """Windows of at most cfg["max_seq_len"] tokens, laid out by cfg["window_layout"] with
+    cfg["doc_stride"] (window_ranges; spec §3.3-3.4).
 
     training=True skips the questions whose answers[0] is not word-aligned or is longer than
     cfg["max_answer_words"] words (spec §3.2; 343 on train-v1.1), and raises if a kept question
@@ -323,7 +346,8 @@ def featurize(questions: list[Question], tokenizer, cfg: dict, training: bool) -
         if ex.gold is not None and f[ex.gold[0]:ex.gold[1] + 1].any():
             c = np.flatnonzero(f[ex.gold[0]:ex.gold[1] + 1])
             core = (ex.gold[0] + int(c[0]), ex.gold[0] + int(c[-1]))
-        for win in make_windows(q_ids, ex.context, layout, cfg["max_seq_len"], cfg["doc_stride"], e):
+        for win in make_windows(q_ids, ex.context, layout, cfg["max_seq_len"], cfg["doc_stride"], e,
+                                cfg["window_layout"]):
             if ex.gold is not None and win.first_word <= ex.gold[0] and ex.gold[1] < win.first_word + win.n_words:
                 win.gold = (ex.gold[0] - win.first_word, ex.gold[1] - win.first_word)
             win.content = f[win.first_word:win.first_word + win.n_words]

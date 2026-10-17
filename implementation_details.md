@@ -28,7 +28,8 @@ Implementation spec for coding agents and team members.
 model: microsoft/deberta-v3-large      # development: microsoft/deberta-v3-base
 precision: bf16                        # bf16 autocast compute, fp32 master weights and optimizer state (§9); fp16 can be unstable with DeBERTa-v3
 max_seq_len: 384
-doc_stride: 128
+doc_stride: 128                        # window_layout even: the most passage tokens between consecutive window starts; left: the overlap (§3.3)
+window_layout: even                    # even = the fewest full windows whose starts are at most doc_stride apart, spread evenly over the passage | left = runs before 17 Oct 2026: from the left, overlapping by doc_stride, the last window holding the rest (§3.3)
 padding: dynamic                       # pad to longest in batch; batch by similar length
 max_answer_words: 30                   # L; every dev question has a reference of ≤ 28 words
 span_head: compound                    # Fajcik et al. (2021) objectives: compound (row 1+; I+J) = joint + auxiliary independent loss | joint (J; P2 ablation) | conditional (JC; 1b test) | standard (I; row 0)
@@ -120,8 +121,10 @@ def word_spans(text: str) -> list[tuple[int, int]]:
 ```
 
 ### 3.3 Words ↔ subword tokens
-- Tokenize each passage once on its own with the fast tokenizer (`return_offsets_mapping=True`), and each question on its own. A window is `[CLS] question [SEP] passage tokens [SEP]`, at most 384 tokens; consecutive windows overlap by 128 passage tokens and together cover the whole passage (`squadqa.data.make_windows`).
-- **Do not use `return_overflowing_tokens`.** tokenizers 0.23 (every release through 0.23.2; 0.22.2 is correct) returns at most two windows per (question, passage) pair and sometimes cuts the second short, so the end of the passage is lost for 528 train, 57 validation and 146 dev questions (checked 2026-10-04). Where the library covers the whole passage, our windows are identical to its windows (`tests/test_data.py`).
+- Tokenize each passage once on its own with the fast tokenizer (`return_offsets_mapping=True`), and each question on its own. A window is `[CLS] question [SEP] passage tokens [SEP]`, at most 384 tokens, so it has room for B = 384 − 3 − (question tokens) passage tokens. A question's windows together cover the whole passage (`squadqa.data.make_windows`, `window_ranges`). `window_layout` sets how:
+  - **`even`** (the default since 17 Oct 2026): a passage of n ≤ B tokens is one window. A longer one gets the fewest windows whose consecutive starts are at most `doc_stride` (128) tokens apart, k = 1 + ⌈(n − B) / 128⌉. Each holds B passage tokens, and their starts are spread evenly from 0 to n − B: the last window ends at the passage's end, and consecutive windows overlap by at least B − 128 tokens (within 1 token of each other).
+  - **`left`** (every run before; `predict.ADDED_KEYS` fills it in for them): windows from the left, consecutive ones overlapping by exactly `doc_stride` tokens. The last window holds the rest of the passage, so it can be as short as 129 tokens (median 168 in train).
+- **Do not use `return_overflowing_tokens`.** tokenizers 0.23 (every release through 0.23.2; 0.22.2 is correct) returns at most two windows per (question, passage) pair and sometimes cuts the second short, so the end of the passage is lost for 528 train, 57 validation and 146 dev questions (checked 2026-10-04). With `window_layout: left`, wherever the library covers the whole passage, our windows are identical to its windows (its `stride` is the overlap; `tests/test_data.py`).
 - For each passage word in a window:
   - `first_tok[w]` = first subword token whose character span lies inside the word;
   - `last_tok[w]` = last such token.
@@ -129,7 +132,7 @@ def word_spans(text: str) -> list[tuple[int, int]]:
 - **DeBERTa-v3 offsets include the leading space of a word** (checked 2026-09-24: in "Who won", the token " won" has span (3, 7), not (4, 7)). Strip leading whitespace from each token's span before comparing it with word spans. Otherwise no token "lies inside" a word that follows a space, and `first_tok` silently finds nothing.
 
 ### 3.4 Windows
-- About 5% of paragraphs exceed 250 words, so most questions produce one window: 689 of the 87,256 kept training questions have more than one, and none has more than 4.
+- About 5% of paragraphs exceed 250 words, so most questions produce one window: 689 of the 87,256 kept training questions have more than one under either layout, and none has more than 5 under `even` (4 under `left`). `even`'s overlaps are larger, so more gold answers lie wholly inside two or more windows: 470 of these questions (134 under `left`); 50 of the 7,708 validation questions (15).
 - Several windows: put the valid span scores of all windows of a question into **one** softmax. A span present in several windows uses the score from the window where it is most central (largest `min(tokens to its left, tokens to its right)` within the window).
 - Training with several windows: start and end (and later span) scores of all the question's windows share one softmax too. The gold answer's copies in every window that wholly holds it all count as correct: the loss is minus the log of their summed probability (`squadqa.heads.question_nll`).
 

@@ -36,18 +36,35 @@ def test_misaligned_answers_are_none(start, text):
     assert D.answer_word_span(words, start, text) is None
 
 
-@pytest.mark.parametrize("n, budget, stride", [(10, 20, 5), (20, 20, 5), (21, 20, 5), (100, 20, 5), (1000, 366, 128)])
-def test_window_ranges_cover_everything_with_the_stride_overlap(n, budget, stride):
-    ranges = D.window_ranges(n, budget, stride)
+WINDOW_CASES = [(10, 20, 5), (20, 20, 5), (21, 20, 5), (24, 20, 5), (26, 20, 5), (100, 20, 5), (101, 20, 19),
+                (367, 366, 128), (494, 366, 128), (495, 366, 128), (1000, 366, 128), (2000, 366, 128)]
+
+
+@pytest.mark.parametrize("n, budget, stride", WINDOW_CASES)
+def test_even_windows_are_full_spread_evenly_and_as_few_as_the_stride_allows(n, budget, stride):
+    ranges = D.window_ranges(n, budget, stride, "even")
+    assert ranges[0][0] == 0 and ranges[-1][1] == n
+    assert all(b - a == min(budget, n) for a, b in ranges)          # every window full
+    steps = [a1 - a0 for (a0, _), (a1, _) in zip(ranges, ranges[1:])]
+    assert all(0 < s <= stride for s in steps)
+    assert not steps or max(steps) - min(steps) <= 1                 # spread evenly
+    assert len(ranges) == 1 or n - budget > stride * (len(ranges) - 2)   # one window fewer would need a longer step
+    assert all(b0 - a1 >= budget - stride for (_, b0), (a1, _) in zip(ranges, ranges[1:]))
+
+
+@pytest.mark.parametrize("n, budget, stride", WINDOW_CASES)
+def test_left_windows_overlap_by_the_stride(n, budget, stride):
+    ranges = D.window_ranges(n, budget, stride, "left")
     assert ranges[0][0] == 0 and ranges[-1][1] == n
     assert all(b - a <= budget for a, b in ranges)
     assert all(b0 - a1 == stride for (_, b0), (a1, _) in zip(ranges, ranges[1:]))
     assert len(ranges) == 1 or ranges[-2][1] < n                     # no window is redundant
 
 
-def test_window_ranges_need_budget_above_stride():
+@pytest.mark.parametrize("budget, stride, layout", [(5, 5, "even"), (5, 0, "even"), (5, 5, "left"), (20, 5, "right")])
+def test_window_ranges_reject_bad_settings(budget, stride, layout):
     with pytest.raises(ValueError):
-        D.window_ranges(10, 5, 5)
+        D.window_ranges(10, budget, stride, layout)
 
 
 # Splits.
@@ -109,6 +126,11 @@ def val_feats(tok):
     return D.featurize(D.load_split("validation"), tok, CFG, training=False)
 
 
+@pytest.fixture(scope="module")
+def val_feats_left(tok):
+    return D.featurize(D.load_split("validation"), tok, {**CFG, "window_layout": "left"}, training=False)
+
+
 def test_pair_layout_is_cls_sep_sep(tok):
     assert D.pair_layout(tok) == ([tok.cls_token_id], [tok.sep_token_id], [tok.sep_token_id])
 
@@ -135,11 +157,24 @@ def test_round_trip_on_validation(val_feats):
     assert checked > 7600
 
 
-def test_windows_match_the_tokenizer_where_it_is_right(tok, val_feats):
-    """Our windows equal return_overflowing_tokens' windows wherever tokenizers 0.23.2 covers the
-    whole passage. Where it does not (at most two windows, the second sometimes cut short), each
-    of its windows is the start of ours."""
-    exs = val_feats.examples
+def test_even_windows_on_validation(val_feats, val_feats_left):
+    """Every window of a question has the same length (all full), the first starts at the passage's
+    first word and the last ends at its last, and no question has fewer windows than under left."""
+    multi = 0
+    for ex, ex_left in zip(val_feats.examples, val_feats_left.examples):
+        wins = [val_feats.windows[w] for w in ex.windows]
+        assert len({len(w.input_ids) for w in wins}) == 1
+        assert wins[0].first_word == 0 and wins[-1].first_word + wins[-1].n_words == len(ex.context.words)
+        assert len(wins) >= len(ex_left.windows)
+        multi += len(wins) > 1
+    assert 50 < multi < 150
+
+
+def test_left_windows_match_the_tokenizer_where_it_is_right(tok, val_feats_left):
+    """With window_layout left, our windows equal return_overflowing_tokens' windows (its stride is
+    the overlap) wherever tokenizers 0.23.2 covers the whole passage. Where it does not (at most two
+    windows, the second sometimes cut short), each of its windows is the start of ours."""
+    exs = val_feats_left.examples
     enc = tok([ex.question.question for ex in exs], [ex.question.context for ex in exs], truncation="only_second",
               max_length=CFG["max_seq_len"], stride=CFG["doc_stride"], return_overflowing_tokens=True)
     theirs: dict[int, list] = {}
@@ -147,7 +182,7 @@ def test_windows_match_the_tokenizer_where_it_is_right(tok, val_feats):
         theirs.setdefault(e, []).append(enc["input_ids"][k])
     same = cut = 0
     for e, ex in enumerate(exs):
-        ours = [val_feats.windows[w].input_ids.tolist() for w in ex.windows]
+        ours = [val_feats_left.windows[w].input_ids.tolist() for w in ex.windows]
         if ours == theirs[e]:
             same += 1
             continue
@@ -166,6 +201,7 @@ def test_long_passage_windows(tok):
     wins = f.windows
     assert len(wins) > 2
     assert all(len(w.input_ids) <= CFG["max_seq_len"] for w in wins)
+    assert len({len(w.input_ids) for w in wins}) == 1                  # even layout: the last window is full too
     covered = set()
     for w in wins:
         covered |= set(range(w.first_word, w.first_word + w.n_words))
