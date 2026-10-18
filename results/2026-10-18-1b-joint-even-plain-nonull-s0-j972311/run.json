@@ -1,0 +1,11 @@
+{
+  "run_id": "2026-10-18-1b-joint-even-plain-nonull-s0-j972311",
+  "experiment": "1b-joint",
+  "config_file": "configs/experiments/1b-joint.yaml",
+  "seed": 0,
+  "git_commit": "5a0ea07eca9d33b41257cd4f91ddb28028abc11f",
+  "git_dirty": false,
+  "slurm_job_id": "972311",
+  "host": "xgpk0",
+  "started": "2026-10-18T23:10:59"
+}

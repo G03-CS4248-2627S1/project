@@ -1,0 +1,30 @@
+{
+  "validation": {
+    "map": {
+      "exact": 74.70160871821484,
+      "f1": 87.51626735234424,
+      "total": 7708
+    },
+    "mbr": {
+      "exact": 74.75350285417748,
+      "f1": 87.70763994648597,
+      "total": 7708
+    }
+  },
+  "calibration": {
+    "temperature": 1.148060869965752,
+    "nll_at_1": 1.198168351166639,
+    "nll": 1.1793661246145275,
+    "questions": 7679,
+    "left_out": 29,
+    "unit": "span"
+  },
+  "steps": 2487,
+  "train_minutes_last_job": 2.9,
+  "gpu": "NVIDIA H200 NVL",
+  "per_device_batch": 16,
+  "peak_gpu_gb": {
+    "train": 10.0,
+    "predict": 5.0
+  }
+}
