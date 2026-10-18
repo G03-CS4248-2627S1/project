@@ -1,8 +1,9 @@
 #!/bin/bash
 # Milestone 1b, joint span head: development runs on deberta-v3-base, seed 0, scored on the validation
-# split (workflow.md §5.1). Every 1b run has the no-answer option; the runs compare the four objectives
-# of Fajcik et al. (2021) and, for the bilinear ones, the length bias, the position encodings added
-# right before the pair term, the dot-product pair term, and rotary encodings on the full W
+# split (workflow.md §5.1). The original grid used the no-answer option; round 2's pair scorers use
+# the no-answer-free reference. The runs compare the four objectives of Fajcik et al. (2021) and,
+# for the bilinear ones, the length bias, position encodings, and the full, low-rank dot, diagonal
+# and MLP pair terms
 # (spec §4.1, §4.3; literature_review.md §8).
 #
 # Run from the repo root on your own machine (Git Bash on Windows), with the soc.sh tunnel open and the
@@ -40,6 +41,8 @@ RUNS=(
   "compound-plain|1b-compound|plain|--set length_bias=false"
   "compound-dot|1b-compound|dot|--set bilinear_form=dot"
   "compound-rotary|1b-compound|rotary|--set bilinear_pos=rotary"
+  "joint-diag-nonull|1b-joint|even-diag-nonull|--set length_bias=false --set no_answer=false --set bilinear_form=diag"
+  "joint-mlp-nonull|1b-joint|even-mlp-nonull|--set length_bias=false --set no_answer=false --set bilinear_form=mlp"
 )
 
 field() { cut -d'|' -f"$2" <<<"$1"; }
@@ -62,13 +65,11 @@ case "${1:-}" in
         "$(field "$r" 1)" "$GPUS" "$TIME" "$(field "$r" 2)" "${tag:+,TAG=$tag}" "$(field "$r" 4)"
     done ;;
   smoke)
-    # The new code paths: the compound head with the full pair term and additive encodings (joint,
-    # auxiliary, length bias, null), with the full pair term and rotary encodings, and the conditional
-    # head. Job 1 stops after step 30 with a checkpoint at 20; job 2 resumes it and predicts. The
-    # resume drops --stop-after, which is not part of the config, so the resume check passes
-    # (AGENTS.md lessons).
-    for spec in "1b-compound|additive|--set bilinear_pos=additive" \
-                "1b-compound|rotary|--set bilinear_pos=rotary" "1b-conditional||"; do
+    # The new diagonal and MLP pair terms, using round 2's no-answer-free reference settings. Job 1
+    # stops after step 30 with a checkpoint at 20; job 2 resumes it and predicts. The resume drops
+    # --stop-after, which is not part of the config, so the resume check passes (AGENTS.md lessons).
+    for spec in "1b-joint|diag-nonull|--set length_bias=false --set no_answer=false --set bilinear_form=diag" \
+                "1b-joint|mlp-nonull|--set length_bias=false --set no_answer=false --set bilinear_form=mlp"; do
       exp=$(field "$spec" 1); tag=$(field "$spec" 2)
       read -ra extra <<<"$(field "$spec" 3)"
       run_id="$(date +%F)-$exp${tag:+-$tag}-smoke-s0-t$(date +%H%M%S)"
