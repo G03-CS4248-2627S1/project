@@ -36,8 +36,13 @@ def valid(mask, w, i, j, max_len=3):
 
 # The joint head (spec §4.1).
 
-PAIR_TERMS = [("full", "none"), ("full", "additive"), ("full", "rotary"), ("dot", "none"), ("dot", "additive"),
-              ("dot", "rotary")]
+PAIR_TERMS = [
+    ("full", "none"), ("full", "additive"), ("full", "rotary"),
+    ("dot", "none"), ("dot", "additive"), ("dot", "rotary"),
+    ("diag", "none"), ("diag", "additive"), ("mlp", "none"), ("mlp", "additive"),
+]
+PAIR_PARAMS = {"full": {"W"}, "dot": {"A.weight", "B.weight"}, "diag": {"w"},
+               "mlp": {"A.weight", "A.bias", "B.weight", "norm.weight", "norm.bias", "w"}}
 
 
 @pytest.mark.parametrize("form, pos", PAIR_TERMS)
@@ -49,8 +54,7 @@ def test_joint_head_starts_as_the_standard_head(length_bias, form, pos):
     std = H.StandardSpanHead(8, 4, 3, 0.0)
     joint = H.JointSpanHead(8, 4, 3, 0.0, length_bias=length_bias, pos=pos, form=form, rank=4)
     missing = joint.load_state_dict(std.state_dict(), strict=False).missing_keys     # same MLPs, u and v
-    pair = {"W"} if form == "full" else {"A.weight", "B.weight"}
-    assert set(missing) == pair | ({"len_bias"} if length_bias else set())
+    assert set(missing) == PAIR_PARAMS[form] | ({"len_bias"} if length_bias else set())
     x_first, x_last, x_cls, mask, pos = inputs()
     with torch.no_grad():
         std_out = std(x_first, x_last, mask, x_cls)
@@ -83,6 +87,43 @@ def test_joint_score_formula_with_position_encodings_and_length_bias():
         cs, ce = head.start(x_cls), head.end(x_cls)                                       # (CLS, CLS), no extras
         null = ((cs @ head.W) * ce).sum(-1) + head.u(cs).squeeze(-1) + head.v(ce).squeeze(-1)
     assert torch.allclose(out["null"], null, atol=1e-5)
+
+
+@pytest.mark.parametrize("form", ["diag", "mlp"])
+def test_diag_and_mlp_pair_terms_by_hand(form):
+    """diag: w'(h_i * h_j); mlp: w' LN(relu(A h_i + B h_j + c)) (Fajcik et al.'s f_MLP), on every
+    valid span and on the null, with positions added before the pair term."""
+    torch.manual_seed(9)
+    head = H.JointSpanHead(8, 4, 3, 0.0, length_bias=False, pos="additive", form=form, rank=5)
+    with torch.no_grad():
+        head.w.normal_()
+        x_first, x_last, x_cls, mask, pos = inputs()
+        out = head(x_first, x_last, mask, x_cls, pos)
+        hs, he, pe = head.start(x_first), head.end(x_last), H.sinusoidal(pos, 4)
+        bs, be = hs + pe, he + pe
+
+        def pair(a, b):
+            if form == "diag":
+                return (head.w * a * b).sum()
+            return head.w @ torch.nn.functional.layer_norm(torch.relu(head.A(a) + head.B(b)), (5,),
+                                                           head.norm.weight, head.norm.bias)
+        for w in range(2):
+            for i in range(6):
+                for j in range(6):
+                    if not valid(mask, w, i, j):
+                        assert out["span"][w, i, j] == INF
+                        continue
+                    expected = pair(bs[w, i], be[w, j]) + head.u(hs[w, i]) + head.v(he[w, j])
+                    assert float(out["span"][w, i, j]) == pytest.approx(float(expected), abs=1e-5)
+        cs, ce = head.start(x_cls), head.end(x_cls)
+        null = torch.stack([pair(cs[w], ce[w]) for w in range(2)]) + head.u(cs).squeeze(-1) + head.v(ce).squeeze(-1)
+    assert torch.allclose(out["null"], null, atol=1e-5)
+
+
+@pytest.mark.parametrize("form", ["diag", "mlp"])
+def test_rotary_needs_the_full_or_dot_pair_term(form):
+    with pytest.raises(ValueError, match="pair term"):
+        H.JointSpanHead(8, 4, 3, 0.0, pos="rotary", form=form)
 
 
 def test_position_encodings_change_scores_once_W_is_learned():
@@ -291,6 +332,8 @@ def test_conditional_loss_uses_only_windows_holding_the_answer():
     (["span_head=conditional", "bilinear_pos=additive"], ValueError),
     (["span_head=standard", "bilinear_form=dot"], ValueError),
     (["bilinear_form=cubic"], ValueError),
+    (["span_head=joint", "bilinear_form=diag", "bilinear_pos=rotary"], ValueError),   # rotary: full and dot only
+    (["span_head=compound", "bilinear_form=mlp", "bilinear_pos=rotary"], ValueError),
     (["bilinear_pos=learned"], ValueError),
     (["span_head=standard", "f1_target_weight=0.3"], ValueError),                     # 1a needs a span softmax
     (["span_head=conditional", "risk_weight=0.1"], ValueError),
@@ -424,6 +467,8 @@ HEAD_CONFIGS = {
     "standard": ["span_head=standard"],
     "conditional": ["span_head=conditional"],
     "joint": ["span_head=joint", "length_bias=false", "bilinear_pos=additive"],
+    "joint-diag": ["span_head=joint", "length_bias=false", "bilinear_form=diag"],
+    "joint-mlp": ["span_head=joint", "length_bias=false", "bilinear_form=mlp", "bilinear_pos=additive"],
     "compound": ["span_head=compound", "bilinear_pos=additive"],
     "compound-rotary": ["span_head=compound", "bilinear_pos=rotary"],
     "joint-group": ["span_head=joint", "length_bias=false", "target_unit=group"],
