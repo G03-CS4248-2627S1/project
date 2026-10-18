@@ -22,7 +22,7 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 [ -f .env ] || { echo "No .env: copy .env.example to .env and set SOC_USER and SOC_REPO." >&2; exit 1; }
-set -a; source <(tr -d '\r' < .env); set +a
+set -a; eval "$(tr -d '\015' < .env)"; set +a
 : "${SOC_USER:?Set SOC_USER (your SoC unix id) in .env}"
 : "${SOC_REPO:?Set SOC_REPO (your repo clone on the cluster) in .env}"
 case "$SOC_REPO" in "~"*) echo "SOC_REPO must be relative to your home directory or absolute, without ~." >&2; exit 1 ;; esac
