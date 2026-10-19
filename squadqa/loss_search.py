@@ -76,6 +76,19 @@ def score(metrics: dict) -> dict:
             "calibration_temperature": metrics["calibration"]["temperature"]}
 
 
+def trial_setup(phase: str, params: dict) -> tuple[str, list[str]]:
+    """Return the compatible experiment config and explicit overrides for one trial."""
+    if phase == "e":
+        if params["beta"] == 0.0:
+            # 1a-risk.yaml sets risk_em_weight=1, which is invalid at beta=0.
+            # The matching one-hot config is exactly the intended B baseline.
+            return "configs/experiments/1a-onehot.yaml", []
+        return "configs/experiments/1a-risk.yaml", ["risk_weight=" + str(params["beta"])]
+    return "configs/experiments/1a-soft.yaml", [
+        "f1_target_weight=" + str(params["alpha"]),
+        "f1_target_temperature=" + str(params["tau"]), "f1_target_floor=0.0"]
+
+
 def write_summary(folder: Path, summary: dict) -> None:
     tmp = folder / "summary.json.tmp"
     tmp.write_text(json.dumps(summary, indent=2, allow_nan=False) + "\n", encoding="utf-8")
@@ -120,10 +133,7 @@ def main(argv=None) -> None:
         result_dir = Path("results") / run_id
         metrics_path = result_dir / "metrics.json"
         if not metrics_path.exists():
-            config = "configs/experiments/1a-risk.yaml" if args.phase == "e" else "configs/experiments/1a-soft.yaml"
-            overrides = (["risk_weight=" + str(params["beta"])] if args.phase == "e" else
-                         ["f1_target_weight=" + str(params["alpha"]),
-                          "f1_target_temperature=" + str(params["tau"]), "f1_target_floor=0.0"])
+            config, overrides = trial_setup(args.phase, params)
             command = [sys.executable, "-m", "squadqa.train_reader", "--config", config,
                        "--seed", str(SEED), "--run-id", run_id]
             for override in overrides:

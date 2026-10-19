@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from squadqa.loss_search import ANCHORS, coordinates, parameters, score, suggest
+from squadqa.loss_search import ANCHORS, coordinates, parameters, score, suggest, trial_setup
 from squadqa.loss_search_report import render
 
 
@@ -29,6 +29,14 @@ def test_score_optimizes_map_and_keeps_mbr_for_reporting():
     assert result["map_em_plus_f1"] == 161.5
     assert result["mbr_f1"] == 88.0
     assert result["calibration_temperature"] == 0.8
+
+
+def test_zero_risk_uses_onehot_config_and_positive_risk_uses_risk_config():
+    assert trial_setup("e", {"beta": 0.0}) == ("configs/experiments/1a-onehot.yaml", [])
+    assert trial_setup("e", {"beta": 1.0}) == ("configs/experiments/1a-risk.yaml", ["risk_weight=1.0"])
+    config, overrides = trial_setup("c", {"alpha": 0.5, "tau": 0.3})
+    assert config == "configs/experiments/1a-soft.yaml"
+    assert overrides == ["f1_target_weight=0.5", "f1_target_temperature=0.3", "f1_target_floor=0.0"]
 
 
 def test_report_compares_map_to_matched_mbr_baseline():
