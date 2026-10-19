@@ -36,8 +36,8 @@ span_head: compound                    # Fajcik et al. (2021) objectives: compou
 aux_independent_weight: 1.0            # compound only (Fajcik et al., 2021)
 head_dim: 256
 W_init: zeros
-bilinear_form: full                    # joint and compound pair term (§4.1): full = h_iᵀ W h_j (biaffine) | dot = (A h_i)ᵀ(B h_j) of rank bilinear_rank (Fajcik et al.'s dot product; 1b test)
-bilinear_rank: 64                      # dot form only
+bilinear_form: full                    # joint and compound pair term (§4.1): full | dot | diag (weighted product) | mlp (Fajcik et al., 2021)
+bilinear_rank: 64                      # hidden width of dot and mlp
 length_bias: true                      # joint and compound: learned bonus b[j − i] per span length, zero at init (§4.1)
 bilinear_pos: none                     # joint and compound, pair term only (§4.1; 1b tests): none | additive = sinusoidal encodings added to h_i, h_j | rotary = RoPE on the pair term's inputs (h_i, h_j for full; A h_i, B h_j for dot)
 no_answer: false                       # true = a null option, the span (CLS, CLS), in every softmax; never predicted (rule 5); 1b tests set it (§4.1)
@@ -183,7 +183,11 @@ p(i, j) = softmax of s over all valid spans (flattened)
 - `W` and `b` start at zero, so the head starts as the standard start + end model.
 - Compute the full n × n word-level matrix and mask it. No band tricks are needed at these sizes.
 - **Head options** (joint and compound; milestone 1b tests them; the survey behind them is in `literature_review.md` §8):
-  - **Pair term** (`bilinear_form`): `full` is `h_iᵀ W h_j`, the biaffine scorer of Yu et al. (2020). `dot` is `(A h_i)ᵀ(B h_j)` with A and B of rank `bilinear_rank` (64): the dot product of projections that Fajcik et al. found best for BERT-type models, as a low-rank W. B starts at zero and A at random, so the pair term starts at zero and both factors get gradients; two zero factors would never move.
+  - **Pair term** (`bilinear_form`): `full` is `h_iᵀ W h_j`, the biaffine scorer of Yu et al. (2020). `dot` is `(A h_i)ᵀ(B h_j)` with A and B of rank `bilinear_rank` (64): the dot product of projections that Fajcik et al. found best for BERT-type models, as a low-rank W. B starts at zero and A at random, so the pair term starts at zero; B gets a gradient immediately and A gets one after B moves. Two zero factors would never move.
+    - `diag` is `wᵀ(h_i ∘ h_j)`, Fajcik et al.'s weighted dot product (a diagonal W). w starts at zero.
+    - `mlp` is `wᵀ LN(ReLU(A h_i + B h_j + c))`, Fajcik et al.'s f_MLP (from Lee et al., 2019; LN is layer normalization), with hidden width `bilinear_rank` and without their constant b₂, which the softmax ignores. w starts at zero, A and B at random. It is computed only for spans of at most `max_answer_words` words, one span length at a time, so memory grows with n · L, not n².
+    - Their additive scorer `wᵀ[h_i; h_j]` is not a form: it splits into a start and an end score, which `u·h_i + v·h_j` already are. For the same reason their additive-plus-weighted-product scorer is `diag`. In their BERT-base compound runs on SQuAD v1.1 the dot product was best (81.83 EM; f_MLP 81.61, weighted dot 81.35).
+    - The null's pair term uses the same form on `(h_c, h'_c)`.
   - `length_bias: false` drops `b`.
   - **Positions in the pair term** (`bilinear_pos`), never in `u` and `v`:
     - `additive`: sinusoidal encodings (Vaswani et al., 2017) of each word's index in the passage, added to `h_i` and `h_j` right before the pair term: `(h_i + PE(i))ᵀ W (h_j + PE(j))`. The product has terms in both the distance and the absolute positions.

@@ -19,7 +19,13 @@ Objectives of Extractive Question Answering", MRQA; their names in brackets):
 Options of the bilinear heads (joint, compound):
 - bilinear_form: the pair term. full = h_i' W h_j' with W zero at init (the biaffine scorer of
   Yu et al., 2020); dot = (A h_i')(B h_j'), A and B of rank bilinear_rank (the dot product Fajcik et
-  al. found best for BERT-type models), B zero at init so the gradient reaches both.
+  al. found best for BERT-type models), B zero at init so B gets the first gradient and A gets one
+  after B moves; diag =
+  w'(h_i' * h_j'), Fajcik et al.'s weighted dot product, w zero at init; mlp = w' LN(relu(A h_i' +
+  B h_j' + c)), their f_MLP (from Lee et al., 2019) of hidden width bilinear_rank, w zero at init,
+  computed only for spans of at most max_answer_words words. Their additive scorer w'[h_i; h_j] is
+  already u.h_i + v.h_j, and additive plus weighted product reduces to diag, so neither is a form.
+  rotary works with full and dot only.
 - length_bias: the learned bonus b[j - i], zero at init.
 - bilinear_pos: position information in the pair term only; u.h_i and v.h_j see h itself, so the
   head still starts as the standard model. additive: sinusoidal encodings of each word's position
@@ -47,6 +53,8 @@ import torch.nn as nn
 NEG_INF = float("-inf")
 HEADS = ("standard", "joint", "compound", "conditional")
 BILINEAR = ("joint", "compound")
+PAIR_FORMS = ("full", "dot", "diag", "mlp")
+ROTARY_FORMS = ("full", "dot")
 
 
 def _mlp(d_model: int, d_h: int, dropout: float) -> nn.Module:
@@ -111,21 +119,30 @@ class StandardSpanHead(nn.Module):
 
 class JointSpanHead(nn.Module):
     """s(i, j) = pair(h_i, h_j) + u.h_i + v.h_j + b[j - i] (spec §4.1-4.2); the pair term is
-    h_i' W h_j' (form full) or (A h_i')(B h_j') (form dot), h' = h (+ PE), rotated for rotary."""
+    h_i' W h_j' (form full), (A h_i')(B h_j') (dot), w'(h_i' * h_j') (diag) or w' LN(relu(A h_i' +
+    B h_j' + c)) (mlp), h' = h (+ PE), rotated for rotary (full and dot only)."""
 
     def __init__(self, d_model: int, d_h: int = 256, max_len: int = 30, dropout: float = 0.1,
                  length_bias: bool = True, pos: str = "none", form: str = "full", rank: int = 64):
         super().__init__()
-        if pos not in ("none", "additive", "rotary") or form not in ("full", "dot"):
+        bad_rotary = pos == "rotary" and form not in ROTARY_FORMS
+        if pos not in ("none", "additive", "rotary") or form not in PAIR_FORMS or bad_rotary:
             raise ValueError(f"unsupported pair term: bilinear_form {form!r} with bilinear_pos {pos!r}")
         self.start = _mlp(d_model, d_h, dropout)
         self.end = _mlp(d_model, d_h, dropout)
         if form == "full":
             self.W = nn.Parameter(torch.zeros(d_h, d_h))                     # zero init (W_init: zeros)
-        else:
+        elif form == "dot":
             self.A = nn.Linear(d_h, rank, bias=False)
             self.B = nn.Linear(d_h, rank, bias=False)
             nn.init.zeros_(self.B.weight)                                   # zero pair term, nonzero gradient
+        elif form == "diag":
+            self.w = nn.Parameter(torch.zeros(d_h))                          # w'(h_i * h_j), zero at init
+        else:                                                                # mlp: w' LN(relu(A h_i + B h_j + c))
+            self.A = nn.Linear(d_h, rank)                                   # its bias is c
+            self.B = nn.Linear(d_h, rank, bias=False)
+            self.norm = nn.LayerNorm(rank)
+            self.w = nn.Parameter(torch.zeros(rank))                        # zero pair term at init
         self.u = nn.Linear(d_h, 1)
         self.v = nn.Linear(d_h, 1)
         self.len_bias = nn.Parameter(torch.zeros(max_len)) if length_bias else None   # b[length - 1]
@@ -133,21 +150,40 @@ class JointSpanHead(nn.Module):
         self.max_len = max_len
 
     def pair(self, bs: torch.Tensor, be: torch.Tensor, positions: torch.Tensor | None) -> torch.Tensor:
-        """(W, n, n) pair terms of start features bs and end features be (W, n, d_h)."""
+        """(W, n, n) pair terms of start features bs and end features be (W, n, d_h). The mlp form
+        is computed only for spans of at most max_len words, one diagonal at a time (0 elsewhere,
+        where valid_spans masks the span anyway)."""
         if self.form == "full":
             if self.pos == "rotary":
                 bs, be = rotary(bs, positions), rotary(be, positions)
             return (bs @ self.W) @ be.transpose(1, 2)
+        if self.form == "diag":
+            return (bs * self.w) @ be.transpose(1, 2)
         q, k = self.A(bs), self.B(be)
-        if self.pos == "rotary":
-            q, k = rotary(q, positions), rotary(k, positions)
-        return q @ k.transpose(1, 2)
+        if self.form == "dot":
+            if self.pos == "rotary":
+                q, k = rotary(q, positions), rotary(k, positions)
+            return q @ k.transpose(1, 2)
+        n = bs.size(1)
+        out = torch.zeros(bs.size(0), n, n, dtype=torch.float32, device=bs.device)
+        for d in range(min(self.max_len, n)):                               # span length d + 1: (i, i + d)
+            out.diagonal(d, 1, 2).copy_(self.mlp_term(q[:, :n - d], k[:, d:]))
+        return out
+
+    def mlp_term(self, q: torch.Tensor, k: torch.Tensor) -> torch.Tensor:
+        """w' LN(relu(q + k)) over the last dimension, in fp32: Fajcik et al.'s f_MLP, whose
+        sigma is layer normalization of a ReLU, without its constant b2 (a softmax ignores it)."""
+        return self.norm(torch.relu(q.float() + k.float())) @ self.w.float()
 
     def pair_null(self, cs: torch.Tensor, ce: torch.Tensor) -> torch.Tensor:
         """(W,) pair term of the null (CLS, CLS), without position terms, summed in fp32."""
         if self.form == "full":
             return ((cs @ self.W).float() * ce.float()).sum(-1)
-        return (self.A(cs).float() * self.B(ce).float()).sum(-1)
+        if self.form == "diag":
+            return (cs.float() * self.w.float() * ce.float()).sum(-1)
+        if self.form == "dot":
+            return (self.A(cs).float() * self.B(ce).float()).sum(-1)
+        return self.mlp_term(self.A(cs), self.B(ce))
 
     def forward(self, x_first: torch.Tensor, x_last: torch.Tensor, word_mask: torch.Tensor,
                 x_cls: torch.Tensor | None = None, positions: torch.Tensor | None = None) -> dict:
@@ -457,8 +493,11 @@ def check_head_config(cfg: dict) -> None:
         raise ValueError(f"F1-weighted targets and the risk loss need a span softmax: span_head in {BILINEAR}")
     if cfg["span_head"] in BILINEAR and cfg["W_init"] != "zeros":
         raise NotImplementedError(f"W_init {cfg['W_init']!r} is not built; only zeros")
-    if cfg["bilinear_form"] not in ("full", "dot") or cfg["bilinear_pos"] not in ("none", "additive", "rotary"):
+    if cfg["bilinear_form"] not in PAIR_FORMS or cfg["bilinear_pos"] not in ("none", "additive", "rotary"):
         raise ValueError(f"unknown bilinear_form {cfg['bilinear_form']!r} or bilinear_pos {cfg['bilinear_pos']!r}")
+    if cfg["bilinear_pos"] == "rotary" and cfg["bilinear_form"] not in ROTARY_FORMS:
+        raise ValueError(f"bilinear_pos rotary rotates the pair term's inputs: bilinear_form in {ROTARY_FORMS}, "
+                         f"not {cfg['bilinear_form']!r}")
     if cfg["span_head"] not in BILINEAR and (cfg["bilinear_pos"] != "none" or cfg["bilinear_form"] != "full"):
         raise ValueError(f"bilinear_pos and bilinear_form need a bilinear head {BILINEAR}, not {cfg['span_head']!r}")
 
