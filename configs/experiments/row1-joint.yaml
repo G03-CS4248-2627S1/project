@@ -1,6 +1,9 @@
 # Ladder row 1: Fajcik et al.'s joint objective (J), one softmax over all spans, frozen 2026-10-20 at the
 # 1b freeze (#63) by the selection rule (plan §15.3): full W, no length bonus or position terms, no
-# no-answer option, one-hot targets. base.yaml's defaults are this setting; the keys below make it explicit.
+# no-answer option, one-hot targets per group of boundary variants (target_unit group, the team's choice:
+# the loss then counts the gold answer once, as the scorer does; E1's one-hot cells trained this way, but it
+# was not compared head to head with span at these settings). base.yaml's defaults are the rest of this
+# setting; the keys below make it explicit.
 # Ladder row 2 (F1-weighted targets) was not adopted (E1, #61), and ladder row 3 is these runs decoded
 # with MBR (gamma = 1), which every run reports next to MAP.
 # Evidence, base, validation, MAP EM / F1:
@@ -17,5 +20,6 @@ bilinear_form: full
 bilinear_pos: none
 length_bias: false
 no_answer: false
+target_unit: group
 f1_target_weight: 0.0
 risk_weight: 0.0
