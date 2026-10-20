@@ -2,7 +2,7 @@
 
 How each stage and experiment is carried out: where code goes, how work is split and reviewed, and when to open a pull request.
 
-- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.8). **How to build it:** [implementation_details.md](implementation_details.md). **When:** [timeline.md](timeline.md). **How we work:** this file.
+- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.10). **How to build it:** [implementation_details.md](implementation_details.md). **When:** [timeline.md](timeline.md). **How we work:** this file.
 - Humans and AI assistants follow the same rules. Assistants read this file with AGENTS.md before starting a task.
 - Change this file through a PR, like any other shared rule.
 
@@ -56,7 +56,7 @@ Entry points run from the repo root as `python -m squadqa.<module>`, with the co
 
 ### 2.2 Runs, checkpoints and data
 
-- **Run ids:** `<date>-<experiment>-s<seed>-j<Slurm job id>`, as in AGENTS.md. `<experiment>` is the config file name, for example `row1-compound`.
+- **Run ids:** `<date>-<experiment>-s<seed>-j<Slurm job id>`, as in AGENTS.md. `<experiment>` is the config file name, for example `row1-joint`.
 - **Each run writes** `results/<run_id>/` with the resolved config (after overrides), the git commit, the seed, `metrics.json`, and validation predictions. Final scoring adds the dev and robustness predictions (§6).
 - **Commit everything in a run's folder except `candidates_*.json`** (about 4 MB each, decided 2026-10-04): config, `run.json`, metrics, calibration and predictions, including `epoch<k>/` folders. Candidates stay on the cluster; regenerate them from the run's checkpoint with `python -m squadqa.predict --run-id <run_id>` when needed (#25 uses the final row-0 runs).
 - **Checkpoints** stay in your own `$SQUADQA_SCRATCH/runs/<run_id>/` on the cluster and are never committed.

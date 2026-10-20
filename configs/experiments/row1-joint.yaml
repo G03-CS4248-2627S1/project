@@ -1,0 +1,21 @@
+# Ladder row 1: Fajcik et al.'s joint objective (J), one softmax over all spans, frozen 2026-10-20 at the
+# 1b freeze (#63) by the selection rule (plan §15.3): full W, no length bonus or position terms, no
+# no-answer option, one-hot targets. base.yaml's defaults are this setting; the keys below make it explicit.
+# Ladder row 2 (F1-weighted targets) was not adopted (E1, #61), and ladder row 3 is these runs decoded
+# with MBR (gamma = 1), which every run reports next to MAP.
+# Evidence, base, validation, MAP EM / F1:
+#   row 0 standard head, 3 seeds (#59, old windows)       73.91 / 87.38
+#   compound-plain, 3 seeds (#59, old windows)            74.18 / 87.38
+#   joint-plain, no-answer on, 3 seeds (#63)              74.30 / 87.23
+#   joint-plain, no-answer off, 3 seeds (#63)             74.62 / 87.55
+#   diag 74.21 / 87.11, mlp 74.01 / 87.12, dot + rotary 74.42 / 87.23 (seed 0, #63)
+# Runs: large, seeds 0-2, 8 windows per pass (fits an A100-40):
+#   soc.sh submit --gpus=flexible --time=01:00:00 --export=ALL,EXPERIMENT=row1-joint,SEED=<0|1|2> \
+#     slurm/train_reader.sbatch --per-device-batch 8
+span_head: joint
+bilinear_form: full
+bilinear_pos: none
+length_bias: false
+no_answer: false
+f1_target_weight: 0.0
+risk_weight: 0.0

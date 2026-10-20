@@ -8,15 +8,15 @@ doc_stride: 128                        # overlap of consecutive windows, in pass
 window_layout: even                    # even = as many windows as left, all full, spread evenly over the passage | left = runs before 17 Oct 2026: from the left, the last window holding the rest (§3.3)
 padding: dynamic                       # pad to longest in batch; batch by similar length
 max_answer_words: 30                   # L; every dev question has a reference of ≤ 28 words
-span_head: compound                    # Fajcik et al. (2021) objectives: compound (row 1+; I+J) = joint + auxiliary independent loss | joint (J; P2 ablation) | conditional (JC; 1b test) | standard (I; row 0)
+span_head: joint                       # Fajcik et al. (2021) objectives: joint (J; row 1+, frozen 20 Oct, #63) = one softmax over all spans | compound (I+J; ablation) = joint + auxiliary independent loss | conditional (JC; 1b test) | standard (I; row 0)
 aux_independent_weight: 1.0            # compound only (Fajcik et al., 2021)
 head_dim: 256
 W_init: zeros
 bilinear_form: full                    # joint and compound pair term (§4.1): full | dot | diag (weighted product) | mlp (Fajcik et al., 2021)
 bilinear_rank: 64                      # hidden width of dot and mlp
-length_bias: true                      # joint and compound: learned bonus b[j − i] per span length, zero at init (§4.1)
+length_bias: false                     # joint and compound: learned bonus b[j − i] per span length, zero at init (§4.1); off in row 1+ (no effect at the shared learning rate, #44)
 bilinear_pos: none                     # joint and compound, pair term only (§4.1; 1b tests): none | additive = sinusoidal encodings added to h_i, h_j | rotary = RoPE on the pair term's inputs (h_i, h_j for full; A h_i, B h_j for dot)
-no_answer: false                       # true = a null option, the span (CLS, CLS), in every softmax; never predicted (rule 5); 1b tests set it (§4.1)
+no_answer: false                       # true = a null option, the span (CLS, CLS), in every softmax; never predicted (rule 5); off in every row: it costs the joint head about 0.3 EM (#63; §4.1)
 decode_topk: 10
 decode_rules: [map, mbr]               # always report both
 mbr_em_weight: 1.0                     # γ, the F1:EM decoding ratio: MBR utility F1 + γ·EM; 0 = expected F1
