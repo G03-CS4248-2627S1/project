@@ -176,8 +176,9 @@ def eval_questions(name: str):
 
 
 # Config keys added after some runs were trained, with the values that reproduce how those runs
-# were trained (the row-0 runs have none of them).
-ADDED_KEYS = {"f1_target_weight": 0.0, "risk_weight": 0.0, "risk_em_weight": 0.0, "target_unit": "span",
+# were trained (the row-0 runs have none of them; at f1_target_weight 0, τ and φ are unused).
+ADDED_KEYS = {"f1_target_weight": 0.0, "f1_target_temperature": 0.1, "f1_target_floor": 0.5,
+              "risk_weight": 0.0, "risk_em_weight": 0.0, "target_unit": "span",
               "no_answer": False, "length_bias": True, "bilinear_form": "full", "bilinear_rank": 64, "bilinear_pos": "none",
               "window_layout": "left"}
 # Config keys renamed after some runs were trained: old name -> current name.

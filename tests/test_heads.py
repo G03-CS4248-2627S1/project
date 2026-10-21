@@ -470,6 +470,17 @@ def test_old_run_configs_get_renamed_keys(tmp_path, monkeypatch):
     assert cfg["loss_utility"] == "positional" and "f1_target" not in cfg
 
 
+def test_every_committed_run_config_has_every_current_key():
+    runs = [d.name for d in sorted(P.RESULTS.iterdir()) if (d / "config.yaml").exists()]
+    if not runs:
+        pytest.skip("no committed runs")
+    base = load_config(None, [])
+    for run in runs:
+        cfg = P.run_config(run)
+        assert set(base) <= set(cfg) and set(base["train"]) <= set(cfg["train"]), run
+        H.check_head_config(cfg)
+
+
 # Each objective end to end on a tiny encoder.
 
 HEAD_CONFIGS = {
