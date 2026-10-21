@@ -344,8 +344,8 @@ def test_conditional_loss_uses_only_windows_holding_the_answer():
     (["risk_em_weight=1.0"], ValueError),                       # an EM weight for a risk loss that is off
     (["risk_weight=0.1", "risk_em_weight=-1.0"], ValueError),
     (["target_unit=answer"], ValueError),
-    (["span_head=joint", "target_unit=group", "f1_target=positional"], ValueError),   # no variants to pool
-    (["span_head=standard", "target_unit=group"], ValueError),                        # no span softmax
+    (["span_head=joint", "target_unit=group", "loss_utility=positional"], ValueError),   # no variants to pool
+    (["span_head=standard", "target_unit=group"], ValueError),                           # no span softmax
     (["W_init=random"], NotImplementedError),
 ])
 def test_settings_that_are_not_built_or_do_not_apply_raise(overrides, error):
@@ -459,6 +459,15 @@ def test_old_run_configs_get_the_settings_they_were_trained_with():
     cfg = {**P.ADDED_KEYS, **old}
     H.check_head_config(cfg)
     assert cfg["no_answer"] is False and cfg["f1_target_weight"] == 0.0 and cfg["window_layout"] == "left"
+
+
+def test_old_run_configs_get_renamed_keys(tmp_path, monkeypatch):
+    run = tmp_path / "old-run"
+    run.mkdir()
+    (run / "config.yaml").write_text("span_head: joint\nf1_target: positional\n", encoding="utf-8")
+    monkeypatch.setattr(P, "RESULTS", tmp_path)
+    cfg = P.run_config("old-run")
+    assert cfg["loss_utility"] == "positional" and "f1_target" not in cfg
 
 
 # Each objective end to end on a tiny encoder.
