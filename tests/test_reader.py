@@ -155,6 +155,42 @@ def test_epoch_end_hook_runs_after_each_epoch_but_the_last(small_train, tok, tmp
     assert model.training
 
 
+def test_save_each_epoch_keeps_each_epochs_model_but_the_last(small_train, tok, tmp_path):
+    cfg = load_config(None, ["span_head=standard", "train.head_dropout=0.0", "train.effective_batch=4",
+                             "train.epochs=3", "train.checkpoint_every=1000"])
+    model = H.Reader(tiny_encoder(), cfg)
+    states = {}
+
+    def hook(k):                                          # runs right after the epoch's model is saved
+        states[k] = copy.deepcopy(model.state_dict())
+    T.train(model, small_train, cfg, 0, tok.pad_token_id, tmp_path / "ck.pt", 2, "cpu", log=lambda m: None,
+            on_epoch_end=hook, save_each_epoch=True)
+    assert sorted(p.name for p in tmp_path.glob("model_epoch*")) == ["model_epoch1.pt", "model_epoch2.pt"]
+    for k, step in ((1, 6), (2, 12)):
+        saved = torch.load(tmp_path / f"model_epoch{k}.pt", weights_only=False)
+        assert set(saved) == {"model", "step"} and saved["step"] == step
+        loaded = H.Reader(tiny_encoder(seed=5), cfg)
+        assert T.load_checkpoint(tmp_path / f"model_epoch{k}.pt", loaded) == step
+        for name, value in loaded.state_dict().items():
+            assert torch.equal(value, states[k][name]), (k, name)
+
+
+def test_a_run_resumed_at_an_epoch_end_repeats_its_hooks(small_train, tok, tmp_path):
+    cfg = load_config(None, ["span_head=standard", "train.head_dropout=0.0", "train.effective_batch=4",
+                             "train.epochs=2", "train.checkpoint_every=1000"])
+    seen = []
+    model, out = run(small_train, tok, tmp_path / "ck.pt", cfg, stop_after=6, on_epoch_end=seen.append,
+                     save_each_epoch=True)
+    assert out["stopped_early"] and seen == [1]
+    (tmp_path / "model_epoch1.pt").unlink()               # as if the job stopped before the epoch's hooks
+    logs = []
+    out = T.train(H.Reader(tiny_encoder(seed=5), cfg), small_train, cfg, 0, tok.pad_token_id, tmp_path / "ck.pt",
+                  2, "cpu", log=logs.append, on_epoch_end=seen.append, save_each_epoch=True)
+    assert logs[0] == "resumed from step 6" and seen == [1, 1] and out["steps"] == 12
+    assert torch.load(tmp_path / "model_epoch1.pt", weights_only=False)["step"] == 6
+    assert not (tmp_path / "model_epoch2.pt").exists()
+
+
 def test_predict_split_can_skip_candidates(tok, tmp_path):
     val = D.load_split("validation")
     questions = [q for q in val if q.title == val[0].title]

@@ -18,6 +18,10 @@ metrics.json. Row 0 tunes the number of epochs this way (#23): one 3-epoch run p
 rate. The epoch-k model of a longer run is an approximation of a k-epoch run, because its
 learning rate has not decayed to zero yet; confirm the chosen setting with a real run.
 
+--save-each-epoch keeps the model's parameters after every epoch but the last (the last is
+checkpoint.pt) as $SQUADQA_SCRATCH/runs/<run_id>/model_epoch<k>.pt, without optimizer state, so
+about a third of a checkpoint's size; load_checkpoint reads it.
+
 --max-steps and --stop-after are for smoke runs (spec §9): --max-steps shortens the schedule,
 --stop-after exits after that step without predicting, as if the job had been killed; resume
 with the same arguments minus --stop-after (it is not part of the config, so the resume check passes).
@@ -38,6 +42,7 @@ from squadqa import data as D
 from squadqa import evaluate as E
 
 CHECKPOINT = "checkpoint.pt"
+EPOCH_MODEL = "model_epoch{}.pt"
 
 
 def load_encoder(name: str, dtype=torch.float32):
@@ -81,6 +86,14 @@ def save_checkpoint(path: Path, model, opt, sched, step: int) -> None:
     tmp.replace(path)
 
 
+def save_model(path: Path, model, step: int) -> None:
+    """The model's parameters alone, without optimizer state, in the checkpoint's layout so
+    load_checkpoint reads it."""
+    tmp = path.with_suffix(".tmp")
+    torch.save({"model": model.state_dict(), "step": step}, tmp)
+    tmp.replace(path)
+
+
 def load_checkpoint(path: Path, model, opt=None, sched=None) -> int:
     """Load into CPU memory first; load_state_dict copies onto the model's device. Loading the
     5.2 GB checkpoint straight onto the GPU fragmented memory and caused out-of-memory retries
@@ -116,18 +129,31 @@ def micro_batches(example_ids: list[int], per_device: int, n_windows: list[int] 
 
 def train(model, feats: D.Features, cfg: dict, seed: int, pad_id: int, ckpt_path: Path, per_device: int,
           device: str, max_steps: int | None = None, stop_after: int | None = None, log=print,
-          on_epoch_end=None) -> dict:
+          on_epoch_end=None, save_each_epoch: bool = False) -> dict:
     """Train with resume from ckpt_path. Returns {"steps", "stopped_early", "losses", "minutes"}.
-    on_epoch_end(k) runs after epoch k (not the last), once a checkpoint of that step is saved."""
+    After epoch k (not the last), once a checkpoint of that step is saved: with save_each_epoch the
+    model's parameters go to model_epoch<k>.pt next to ckpt_path, then on_epoch_end(k) runs. A run
+    resumed from such a checkpoint repeats both, since the job may have stopped before they finished."""
     t = cfg["train"]
     n_batches = len(D.bucket_batches(feats.question_lengths(), t["effective_batch"], seed, 0))
     total_steps = max_steps or n_batches * t["epochs"]
     opt, sched = build_optimizer(model, cfg, total_steps)
+    hooks = save_each_epoch or on_epoch_end is not None
+
+    def end_epoch(k: int) -> None:
+        if save_each_epoch:
+            save_model(ckpt_path.with_name(EPOCH_MODEL.format(k)), model, k * n_batches)
+        if on_epoch_end is not None:
+            on_epoch_end(k)
+        model.train()
+
     step = 0
     if ckpt_path.exists():
         step = load_checkpoint(ckpt_path, model, opt, sched)
         log(f"resumed from step {step}")
     check_fp32(model, opt)
+    if hooks and 0 < step < total_steps and step % n_batches == 0:
+        end_epoch(step // n_batches)
     use_amp = device.startswith("cuda")
     lengths = feats.question_lengths()
     n_windows = [len(ex.windows) for ex in feats.examples]
@@ -162,12 +188,11 @@ def train(model, feats: D.Features, cfg: dict, seed: int, pad_id: int, ckpt_path
                 f"{window_sum / max(el, 1e-9):.1f} windows/s {el / 60:.1f} min"
                 + (f" t_F1 expected F1 {check:.3f}" if check is not None else ""))
             loss_sum, loss_n = 0.0, 0
-        epoch_end = on_epoch_end is not None and step % n_batches == 0 and step < total_steps
+        epoch_end = hooks and step % n_batches == 0 and step < total_steps
         if step % t["checkpoint_every"] == 0 or step == total_steps or epoch_end:
             save_checkpoint(ckpt_path, model, opt, sched, step)
         if epoch_end:
-            on_epoch_end(step // n_batches)
-            model.train()
+            end_epoch(step // n_batches)
         if stop_after is not None and step >= stop_after and step < total_steps:
             return {"steps": step, "stopped_early": True, "losses": losses, "minutes": (time.time() - t0) / 60}
     return {"steps": step, "stopped_early": False, "losses": losses, "minutes": (time.time() - t0) / 60}
@@ -182,6 +207,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--stop-after", type=int, help="smoke runs: exit after this step without predicting")
     parser.add_argument("--eval-each-epoch", action="store_true",
                         help="also score validation after every epoch, into results/<run_id>/epoch<k>/")
+    parser.add_argument("--save-each-epoch", action="store_true",
+                        help="also keep the model's parameters after every epoch but the last, as "
+                             "model_epoch<k>.pt next to the checkpoint")
     args = parser.parse_args(argv)
 
     cfg = C.load_config(args.config, args.set)
@@ -213,7 +241,7 @@ def main(argv: list[str] | None = None) -> None:
 
     result = train(model, feats, cfg, args.seed, tok.pad_token_id, ckpt_dir / CHECKPOINT, args.per_device_batch,
                    device, args.max_steps, args.stop_after, log=lambda m: print(m, flush=True),
-                   on_epoch_end=eval_epoch if args.eval_each_epoch else None)
+                   on_epoch_end=eval_epoch if args.eval_each_epoch else None, save_each_epoch=args.save_each_epoch)
     if result["stopped_early"]:
         print(f"stopped after step {result['steps']} (--stop-after); rerun with --run-id {run_dir.name} to resume",
               flush=True)
