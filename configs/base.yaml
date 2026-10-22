@@ -21,11 +21,11 @@ decode_topk: 10
 decode_rules: [map, mbr]               # always report both
 mbr_em_weight: 1.0                     # γ, the F1:EM decoding ratio: MBR utility F1 + γ·EM; 0 = expected F1
 mbr_utility: normalized                # normalized = content-word F1/EM, boundary variants grouped | positional | string = the scorer's normalization at any position (both E1 rows; §4.4)
-f1_target: normalized                  # normalized = content-word F1, boundary variants exact | positional (ablation; §4.3)
+loss_utility: normalized               # F1 and EM between a span and the gold in the losses (F1 target, risk): normalized = content-word F1/EM, boundary variants exact | positional (ablation; §4.3)
 f1_target_weight: 0.0                  # α, the F1:EM loss ratio (§4.3); 0 = one-hot target (rows 0–1), tuned in E1
 f1_target_temperature: 0.1             # τ: how evenly the F1 credit is spread
 f1_target_floor: 0.5                   # φ: spans with F1 < φ get no F1 credit; 0 = every overlapping span
-target_unit: span                      # span = targets per span (t_EM on the annotated span) | group = per group of boundary variants, so both parts count the gold answer once (§4.3; needs f1_target normalized and a joint or compound head, so the default stays span for row 0); ladder row 1 sets group in its config
+target_unit: span                      # span = targets per span (t_EM on the annotated span) | group = per group of boundary variants, so both parts count the gold answer once (§4.3; needs loss_utility normalized and a joint or compound head, so the default stays span for row 0); ladder row 1 sets group in its config
 risk_weight: 0.0                       # β: weight of the expected-F1 (risk) loss added to the target loss (§4.3); 0 = none
 risk_em_weight: 0.0                    # γ_r: weight of the EM loss inside the risk term, ℒ_risk = Σ p · (ℓ_F1 + γ_r · ℓ_EM) (§4.3); 0 = F1 only. Separate from the decoding γ
 calibration: temperature               # one T, fit on validation split

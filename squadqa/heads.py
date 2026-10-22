@@ -381,7 +381,7 @@ def group_nll(out: dict, batch: dict, n_examples: int) -> torch.Tensor:
 def gold_f1_em(span: torch.Tensor, batch: dict, n_examples: int,
                counted: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     """(W, n, n) F1 and EM of every window span against its question's gold span, positional over the
-    words flagged in counted (W, n): the content words for f1_target normalized, every word for
+    words flagged in counted (W, n): the content words for loss_utility normalized, every word for
     positional; decode.span_f1_em is the same function on one passage. Worked out in passage
     coordinates from the windows that hold the gold, so a span in a window that cuts the gold still
     gets its partial credit. A span with no counted word matches only the identical span."""
@@ -478,8 +478,8 @@ def check_head_config(cfg: dict) -> None:
         raise ValueError(f"unknown span_head {cfg['span_head']!r}; choose from {HEADS}")
     if cfg["target_unit"] not in ("span", "group"):
         raise ValueError(f"unknown target_unit {cfg['target_unit']!r}; choose span or group")
-    if cfg["target_unit"] == "group" and (cfg["f1_target"] != "normalized" or cfg["span_head"] not in BILINEAR):
-        raise ValueError("target_unit group pools boundary variants: it needs f1_target normalized and a "
+    if cfg["target_unit"] == "group" and (cfg["loss_utility"] != "normalized" or cfg["span_head"] not in BILINEAR):
+        raise ValueError("target_unit group pools boundary variants: it needs loss_utility normalized and a "
                          f"span softmax, span_head in {BILINEAR}")
     if cfg["risk_em_weight"] < 0 or (cfg["risk_em_weight"] and not cfg["risk_weight"]):
         raise ValueError("risk_em_weight is the EM weight inside the risk loss: it must be >= 0, "
@@ -516,7 +516,7 @@ class Reader(nn.Module):
         self.aux_weight = cfg["aux_independent_weight"]
         self.target_unit = cfg["target_unit"]
         self.alpha, self.tau, self.floor = cfg["f1_target_weight"], cfg["f1_target_temperature"], cfg["f1_target_floor"]
-        self.beta, self.risk_em_weight, self.f1_target = cfg["risk_weight"], cfg["risk_em_weight"], cfg["f1_target"]
+        self.beta, self.risk_em_weight, self.loss_utility = cfg["risk_weight"], cfg["risk_em_weight"], cfg["loss_utility"]
         self.stats: dict[str, float] = {}               # the last batch's training checks, for the log
         args = (encoder.config.hidden_size, cfg["head_dim"], cfg["max_answer_words"], cfg["train"]["head_dropout"])
         if self.kind == "standard":
@@ -546,7 +546,7 @@ class Reader(nn.Module):
             return self.head.loss(out, batch, n_examples)
         joint = (group_nll if self.target_unit == "group" else joint_nll)(out, batch, n_examples)
         if self.alpha or self.beta:                     # spec §4.3: ℒ = ℒ_soft + β · ℒ_risk on the joint term
-            counted = batch["content"] if self.f1_target == "normalized" else batch["word_mask"]
+            counted = batch["content"] if self.loss_utility == "normalized" else batch["word_mask"]
             if self.alpha:
                 f1_part, expected_f1 = f1_target_nll(out, batch, n_examples, self.tau, self.floor,
                                                      self.target_unit, counted)

@@ -176,18 +176,22 @@ def eval_questions(name: str):
 
 
 # Config keys added after some runs were trained, with the values that reproduce how those runs
-# were trained (the row-0 runs have none of them).
-ADDED_KEYS = {"f1_target_weight": 0.0, "risk_weight": 0.0, "risk_em_weight": 0.0, "target_unit": "span",
+# were trained (the row-0 runs have none of them; at f1_target_weight 0, τ and φ are unused).
+ADDED_KEYS = {"f1_target_weight": 0.0, "f1_target_temperature": 0.1, "f1_target_floor": 0.5,
+              "risk_weight": 0.0, "risk_em_weight": 0.0, "target_unit": "span",
               "no_answer": False, "length_bias": True, "bilinear_form": "full", "bilinear_rank": 64, "bilinear_pos": "none",
               "window_layout": "left"}
+# Config keys renamed after some runs were trained: old name -> current name.
+RENAMED_KEYS = {"f1_target": "loss_utility"}
 
 
 def run_config(run_id: str) -> dict:
-    """A trained run's resolved config, with ADDED_KEYS filled in where the run predates them."""
+    """A trained run's resolved config, with ADDED_KEYS filled in where the run predates them and
+    RENAMED_KEYS under their current names."""
     import yaml
 
     with open(RESULTS / run_id / "config.yaml", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
+        cfg = {RENAMED_KEYS.get(k, k): v for k, v in yaml.safe_load(f).items()}
     return {**ADDED_KEYS, **cfg}
 
 
