@@ -77,9 +77,11 @@ def test_span_scores_are_start_plus_end_on_valid_spans():
                 assert s[w, i, j] == pytest.approx(float(expected))
 
 
-def test_base_config_builds_the_compound_head():
-    model = H.Reader(tiny_encoder(), load_config())                 # base.yaml says compound (ladder row 1)
-    assert model.kind == "compound" and isinstance(model.head, H.JointSpanHead)
+def test_base_config_builds_the_row1_joint_head():
+    model = H.Reader(tiny_encoder(), load_config())                 # base.yaml: ladder row 1, frozen at the 1b freeze
+    assert model.kind == "joint" and isinstance(model.head, H.JointSpanHead)
+    assert model.head.len_bias is None and model.head.form == "full" and model.head.pos == "none"
+    assert not model.no_answer
 
 
 # Training: fp32, loss falls, checkpoint and resume.

@@ -2,7 +2,7 @@
 
 When each part of the project happens, what blocks what, and what to cut if we fall behind.
 
-- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.8). **How:** [implementation_details.md](implementation_details.md). **When:** this file. **How we work:** [workflow.md](workflow.md).
+- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.10). **How:** [implementation_details.md](implementation_details.md). **When:** this file. **How we work:** [workflow.md](workflow.md).
 - This file expands plan §12 into stages. The plan's W1–W7 are course weeks 7–13. Section numbers below (§5, E3, …) refer to the plan.
 - If this file and the plan disagree on scope, stop and ask a human.
 - Drafted 2026-09-28 (week 7). Moved to the submitted proposal's schedule on 2026-10-03 (plan v1.0). Whoever changes a milestone or a stage's scope updates this file and tells the team.
@@ -128,12 +128,12 @@ These wait on a result, but are short and off the critical path:
 
 **Goal:** settle the reader design. This is the main blocker (§3.2).
 
-- **2.1 Compound objective** (plan §5; spec §4.3). Joint head plus the auxiliary independent loss, against the baseline on base. Ablate W init, the length bonus, and joint only.
+- **2.1 Compound objective** (plan §5; spec §4.3). Joint head plus the auxiliary independent loss, against the baseline on base. Ablate W init, the length bonus, and joint only. *Outcome (#44, #63):* the joint objective without the auxiliary loss ties compound and is simpler, so row 1 uses it; no length bonus, position terms or no-answer option.
   - 1b runs (`slurm/joint_head_tests.sh`): Fajcik et al.'s four objectives (independent, conditional, joint, compound); for the bilinear ones the length bias, additive position encodings before the pair term, the dot-product pair term, and rotary encodings on the full W (literature_review.md §8). Every run has the no-answer option (spec §4.1). The reference is row 0 on base, without the option.
 - **2.2 F1-weighted targets** (plan §6), against the baseline on base. Sweep α (the F1:EM loss ratio) and τ, and compare positional with normalized F1 in the targets (spec §4.3), sized by the gap measured in 1.6.
-- **2.3 Combine** the two only if both beat the baseline on the validation split. Otherwise keep the one that does, and report the other as an ablation.
+- **2.3 Combine** the two only if both beat the baseline on the validation split. Otherwise keep the one that does, and report the other as an ablation. *Outcome (E1, #49, #61):* F1-weighted targets and the risk loss did not beat one-hot training, so nothing is combined (milestone 1c is empty) and ladder row 2 is reported as an ablation.
 - **2.4 Rerun E3 on the new head.** The before-and-after comparison is the E3 result.
-- **2.5 Freeze the reader** (Thu 15 Oct) through a freeze PR (workflow.md §5.3). Then launch ladder rows 1–2 on large, 3 seeds, from `main`.
+- **2.5 Freeze the reader** (Thu 15 Oct) through a freeze PR (workflow.md §5.3). Then launch ladder rows 1–2 on large, 3 seeds, from `main`. *Done 20 Oct, five days late* (the freeze PR for #63): row 1 = `configs/experiments/row1-joint.yaml`; the length-bias batch moved to the final ablations.
 - **2.6 Report and slides** draft the model and data choices.
 - **2.7 Verifier groundwork,** off the critical path: marking code and test V5, both backbones loading, a first run on baseline candidates.
 

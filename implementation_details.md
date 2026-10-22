@@ -2,7 +2,7 @@
 
 Implementation spec for coding agents and team members.
 
-- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.8). **How:** this file. **When:** [timeline.md](timeline.md). **How we work:** [workflow.md](workflow.md).
+- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.10). **How:** this file. **When:** [timeline.md](timeline.md). **How we work:** [workflow.md](workflow.md).
 - Week labels such as W2 or W5+ are plan weeks: W1–W7 are course weeks 7–13.
 - If this file and the plan disagree, stop and ask a human.
 
@@ -32,15 +32,15 @@ doc_stride: 128                        # overlap of consecutive windows, in pass
 window_layout: even                    # even = as many windows as left, all full, spread evenly over the passage | left = runs before 17 Oct 2026: from the left, the last window holding the rest (§3.3)
 padding: dynamic                       # pad to longest in batch; batch by similar length
 max_answer_words: 30                   # L; every dev question has a reference of ≤ 28 words
-span_head: compound                    # Fajcik et al. (2021) objectives: compound (row 1+; I+J) = joint + auxiliary independent loss | joint (J; P2 ablation) | conditional (JC; 1b test) | standard (I; row 0)
+span_head: joint                       # Fajcik et al. (2021) objectives: joint (J; row 1+, frozen 20 Oct, #63) = one softmax over all spans | compound (I+J; ablation) = joint + auxiliary independent loss | conditional (JC; 1b test) | standard (I; row 0)
 aux_independent_weight: 1.0            # compound only (Fajcik et al., 2021)
 head_dim: 256
 W_init: zeros
 bilinear_form: full                    # joint and compound pair term (§4.1): full | dot | diag (weighted product) | mlp (Fajcik et al., 2021)
 bilinear_rank: 64                      # hidden width of dot and mlp
-length_bias: true                      # joint and compound: learned bonus b[j − i] per span length, zero at init (§4.1)
+length_bias: false                     # joint and compound: learned bonus b[j − i] per span length, zero at init (§4.1); off in row 1+ (no effect at the shared learning rate, #44)
 bilinear_pos: none                     # joint and compound, pair term only (§4.1; 1b tests): none | additive = sinusoidal encodings added to h_i, h_j | rotary = RoPE on the pair term's inputs (h_i, h_j for full; A h_i, B h_j for dot)
-no_answer: false                       # true = a null option, the span (CLS, CLS), in every softmax; never predicted (rule 5); 1b tests set it (§4.1)
+no_answer: false                       # true = a null option, the span (CLS, CLS), in every softmax; never predicted (rule 5); off in every row: it costs the joint head about 0.3 EM (#63; §4.1)
 decode_topk: 10
 decode_rules: [map, mbr]               # always report both
 mbr_em_weight: 1.0                     # γ, the F1:EM decoding ratio: MBR utility F1 + γ·EM; 0 = expected F1
@@ -49,7 +49,7 @@ loss_utility: normalized               # F1 and EM between a span and the gold i
 f1_target_weight: 0.0                  # α, the F1:EM loss ratio (§4.3); 0 = one-hot target (rows 0–1), tuned in E1
 f1_target_temperature: 0.1             # τ: how evenly the F1 credit is spread
 f1_target_floor: 0.5                   # φ: spans with F1 < φ get no F1 credit; 0 = every overlapping span
-target_unit: span                      # span = targets per span (t_EM on the annotated span) | group = per group of boundary variants, so both parts count the gold answer once (§4.3; needs loss_utility normalized)
+target_unit: span                      # span = targets per span (t_EM on the annotated span) | group = per group of boundary variants, so both parts count the gold answer once (§4.3; needs loss_utility normalized and a joint or compound head, so the default stays span for row 0); ladder row 1 sets group in its config
 risk_weight: 0.0                       # β: weight of the expected-F1 (risk) loss added to the target loss (§4.3); 0 = none
 risk_em_weight: 0.0                    # γ_r: weight of the EM loss inside the risk term, ℒ_risk = Σ p · (ℓ_F1 + γ_r · ℓ_EM) (§4.3); 0 = F1 only. Separate from the decoding γ
 calibration: temperature               # one T, fit on validation split
@@ -289,7 +289,7 @@ risk = (logp.exp() * torch.where(valid, span_loss, torch.zeros_like(span_loss)))
 - `heads.risk_loss` is Σ p · (ℓ_F1 + γ_r · ℓ_EM) over every valid span of the question's windows. The null is never a correct answer, so it adds p(null) · (1 + γ_r).
 - Tests compare all three with brute force over passage spans (`tests/test_heads.py`).
 
-**Compound objective** (`span_head: compound`, ladder row 1; Fajcik et al. 2021): add the standard independent loss on the head's start and end scores.
+**Compound objective** (`span_head: compound`, Fajcik et al. 2021; an ablation since the 1b freeze, which chose the joint objective for ladder row 1, #63): add the standard independent loss on the head's start and end scores.
 - Start logits are `u(h_s)` over the passage words of all of a question's windows (one softmax, as in §3.4); end logits are `v(h_e)`.
 - Cross-entropy against i* and j*, weighted by `aux_independent_weight` (ω in the plan): ℒ = ℒ_joint + ω · ℒ_ind.
 - This term always uses one-hot targets. The F1-weighted target (row 2) and the risk term apply to the joint term only.
