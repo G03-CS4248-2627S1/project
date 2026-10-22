@@ -1,7 +1,9 @@
 # Milestone 1b: Fajcik et al.'s compound objective (I+J), the joint loss plus the independent one
-# (ladder row 1's design), with the no-answer option (spec §4.1, §4.3).
-# Head options by --set: bilinear_form, length_bias (on here, as in base.yaml) and bilinear_pos.
+# (an ablation since the 1b freeze chose the joint objective), with the no-answer option (spec §4.1,
+# §4.3). Head options by --set: bilinear_form, length_bias (on here; base.yaml's default became off at
+# the freeze, so it is set below to keep the 1b tasks as they ran) and bilinear_pos.
 # Development runs on base (workflow.md §3.4).
 model: microsoft/deberta-v3-base
 span_head: compound
+length_bias: true
 no_answer: true

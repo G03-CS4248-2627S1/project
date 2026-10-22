@@ -7,9 +7,9 @@ Objectives of Extractive Question Answering", MRQA; their names in brackets):
 
 - standard (I, independent; ladder row 0): h_i = MLP_start(x[first_tok[i]]), h_j = MLP_end(x[last_tok[j]]),
   start logit u.h_i, end logit v.h_j, span score s(i, j) = u.h_i + v.h_j. Loss: start NLL + end NLL.
-- joint (J): s(i, j) = pair(h_i, h_j) + u.h_i + v.h_j + b[j - i] (spec §4.1), one softmax over
+- joint (J; ladder row 1, frozen at the 1b freeze): s(i, j) = pair(h_i, h_j) + u.h_i + v.h_j + b[j - i] (spec §4.1), one softmax over
   all valid spans. Loss: span NLL. With the pair term and b at zero it is the standard head.
-- compound (I+J; ladder row 1): the joint loss + aux_independent_weight x the standard loss on the
+- compound (I+J; an ablation): the joint loss + aux_independent_weight x the standard loss on the
   same u.h_i and v.h_j. Decoding uses the joint scores.
 - conditional (JC): the standard start logit, and an end distribution given the start i,
   p(j | i) = softmax_j of w.tanh(A x[last_tok[j]] + B x[first_tok[i]] + c) (Fajcik et al.'s form,
