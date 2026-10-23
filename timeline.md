@@ -2,7 +2,7 @@
 
 When each part of the project happens, what blocks what, and what to cut if we fall behind.
 
-- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.10). **How:** [implementation_details.md](implementation_details.md). **When:** this file. **How we work:** [workflow.md](workflow.md).
+- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.11). **How:** [implementation_details.md](implementation_details.md). **When:** this file. **How we work:** [workflow.md](workflow.md).
 - This file expands plan §12 into stages. The plan's W1–W7 are course weeks 7–13. Section numbers below (§5, E3, …) refer to the plan.
 - If this file and the plan disagree on scope, stop and ask a human.
 - Drafted 2026-09-28 (week 7). Moved to the submitted proposal's schedule on 2026-10-03 (plan v1.0). Whoever changes a milestone or a stage's scope updates this file and tells the team.
@@ -133,7 +133,7 @@ These wait on a result, but are short and off the critical path:
 - **2.2 F1-weighted targets** (plan §6), against the baseline on base. Sweep α (the F1:EM loss ratio) and τ, and compare positional with normalized F1 in the targets (spec §4.3), sized by the gap measured in 1.6.
 - **2.3 Combine** the two only if both beat the baseline on the validation split. Otherwise keep the one that does, and report the other as an ablation. *Outcome (E1, #49, #61):* F1-weighted targets and the risk loss did not beat one-hot training, so nothing is combined (milestone 1c is empty) and ladder row 2 is reported as an ablation.
 - **2.4 Rerun E3 on the new head.** The before-and-after comparison is the E3 result.
-- **2.5 Freeze the reader** (Thu 15 Oct) through a freeze PR (workflow.md §5.3). Then launch ladder rows 1–2 on large, 3 seeds, from `main`. *Done 20 Oct, five days late* (the freeze PR for #63): row 1 = `configs/experiments/row1-joint.yaml`; the length-bias batch moved to the final ablations.
+- **2.5 Freeze the reader** (Thu 15 Oct) through a freeze PR (workflow.md §5.3). Then launch ladder rows 1–2 on large, 3 seeds, from `main`. *Done 20 Oct, five days late* (the freeze PR for #63): row 1 = `configs/experiments/row1-joint.yaml`; the length-bias batch moved to the final ablations. *Row 1 on large ran 23 Oct* (#70, #73; 2 epochs): 76.97 / 89.46 with MAP, 77.04 / 89.57 with MBR, a tie with row 0 (76.89 / 89.62).
 - **2.6 Report and slides** draft the model and data choices.
 - **2.7 Verifier groundwork,** off the critical path: marking code and test V5, both backbones loading, a first run on baseline candidates.
 

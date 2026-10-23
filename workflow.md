@@ -2,7 +2,7 @@
 
 How each stage and experiment is carried out: where code goes, how work is split and reviewed, and when to open a pull request.
 
-- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.10). **How to build it:** [implementation_details.md](implementation_details.md). **When:** [timeline.md](timeline.md). **How we work:** this file.
+- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.11). **How to build it:** [implementation_details.md](implementation_details.md). **When:** [timeline.md](timeline.md). **How we work:** this file.
 - Humans and AI assistants follow the same rules. Assistants read this file with AGENTS.md before starting a task.
 - Change this file through a PR, like any other shared rule.
 
