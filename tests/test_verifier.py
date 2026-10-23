@@ -159,3 +159,174 @@ def test_v5_marker_round_trip(name, cases):
         offsets = tok(question, m.text, return_offsets_mapping=True)["offset_mapping"]
         inner = m.text[offsets[enc.open_pos][1]:offsets[enc.close_pos][0]]
         assert inner.strip() == cand
+
+
+# The shared_lora verifier (spec §5.4) on a tiny random reader, CPU only.
+
+torch = pytest.importorskip("torch")
+transformers = pytest.importorskip("transformers")
+from squadqa import heads as H                                          # noqa: E402
+
+V_CFG = load_config(None, ["train.head_dropout=0.0", "verifier.lora.rank=4", "verifier.lora.alpha=8"])
+
+
+def tiny_reader(seed=0):
+    torch.manual_seed(seed)
+    config = transformers.DebertaV2Config(
+        vocab_size=128100, hidden_size=32, num_hidden_layers=2, num_attention_heads=2, intermediate_size=64,
+        max_position_embeddings=512, relative_attention=True, position_buckets=256, pos_att_type=["p2c", "c2p"],
+        type_vocab_size=0, position_biased_input=False, hidden_dropout_prob=0.0, attention_probs_dropout_prob=0.0)
+    reader = H.Reader(transformers.AutoModel.from_config(config), V_CFG)
+    with torch.no_grad():                                               # a "trained" pair term, not zero
+        reader.head.W.normal_(0, 0.1)
+    return reader.eval()
+
+
+@pytest.fixture(scope="module")
+def marked(reader_tok):
+    """A reader batch for 4 validation questions, and a marked batch of each one's gold span and
+    the span one word longer: 8 candidates, 2 per question, the gold first."""
+    open_id, close_id = V.add_markers(reader_tok)
+    qs = D.load_split("validation")[:4]
+    feats = D.featurize(qs, reader_tok, V_CFG, training=False)
+    reader_batch = D.collate(feats.batch(list(range(len(qs)))), reader_tok.pad_token_id)
+    layout = D.pair_layout(reader_tok)
+    encs, question = [], []
+    for k, ex in enumerate(feats.examples):
+        q_ids = reader_tok(ex.question.question, add_special_tokens=False)["input_ids"]
+        windows = D.make_windows(q_ids, ex.context, layout, V_CFG["max_seq_len"], V_CFG["doc_stride"],
+                                 window_layout=V_CFG["window_layout"])
+        i, j = ex.gold
+        for a, b in ((i, j), (i, j + 1)):
+            lo, hi = V.candidate_window(windows, ex.context, a, b)
+            m = V.mark(ex.question.context, ex.context.words, a, b, lo, hi)
+            encs.append(V.encode(reader_tok, ex.question.question, m, open_id, close_id))
+            question.append(k)
+    batch = V.collate_marked(encs, reader_tok.pad_token_id)
+    return open_id, close_id, reader_batch, batch, torch.tensor(question)
+
+
+def _train(v, batch, question, steps=5):
+    opt = torch.optim.AdamW(v.trainable_parameters(), lr=1e-2, weight_decay=0.01)
+    targets = torch.tensor([1.0, 0.0] * (len(question) // 2))
+    v.train()
+    for _ in range(steps):
+        opt.zero_grad()
+        V.listwise_loss(v(batch), question, targets, int(question.max()) + 1).mean().backward()
+        opt.step()
+    v.eval()
+
+
+def _base_params(reader):
+    """The reader's own parameters by their pre-LoRA names (LoRA renames a wrapped layer's weight
+    to <layer>.base_layer.weight) and without the adapters' own."""
+    return {n.replace(".base_layer.", "."): p for n, p in reader.named_parameters() if "lora_" not in n}
+
+
+def test_v4_reader_unchanged_by_verifier_training(marked):
+    open_id, close_id, reader_batch, batch, question = marked
+    reader = tiny_reader()
+    with torch.no_grad():
+        before_scores = reader.span_scores(reader_batch)[0].clone()
+    before_params = {n: p.detach().clone() for n, p in reader.named_parameters()}
+    v = V.SharedLoraVerifier(reader, open_id, close_id, V_CFG)
+    with torch.no_grad():
+        scores0 = v(batch).clone()
+    _train(v, batch, question)
+    with torch.no_grad():
+        after_scores = v.reader_span_scores(reader_batch)[0]
+        scores1 = v(batch)
+    assert torch.equal(after_scores, before_scores)                     # V4: identical reader predictions
+    after_params = _base_params(v.reader)
+    assert set(after_params) == set(before_params)
+    for n, p in before_params.items():                                  # every reader weight, the
+        assert torch.equal(after_params[n], p), n                       # embedding table included
+    assert not torch.allclose(scores1, scores0)                         # and training did change the verifier
+
+
+def test_only_lora_markers_and_head_train(marked):
+    open_id, close_id, *_ = marked
+    v = V.SharedLoraVerifier(tiny_reader(), open_id, close_id, V_CFG)
+    names = [n for n, p in v.named_parameters() if p.requires_grad]
+    assert all("lora_" in n or n == "markers" or n.startswith("head.") for n in names)
+    assert any("lora_" in n for n in names) and "markers" in names
+    assert sum(p.numel() for p in v.trainable_parameters()) < 0.1 * sum(p.numel() for p in v.parameters())
+
+
+def test_lora_starts_as_the_reader_and_the_markers_learn(marked):
+    open_id, close_id, _, batch, question = marked
+    v = V.SharedLoraVerifier(tiny_reader(), open_id, close_id, V_CFG)
+    enc = v.reader.encoder
+    with torch.no_grad():
+        on = enc(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"]).last_hidden_state
+        with V.adapters(enc, False):
+            off = enc(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"]).last_hidden_state
+    assert torch.equal(on, off)                                         # LoRA's B starts at zero
+    V.listwise_loss(v(batch), question, torch.tensor([1.0, 0.0] * 4), 4).mean().backward()
+    assert v.markers.grad is not None and v.markers.grad.abs().sum() > 0
+
+
+def test_the_markers_replace_their_rows_of_the_embedding_table(marked):
+    open_id, close_id, _, batch, _ = marked
+    v = V.SharedLoraVerifier(tiny_reader(), open_id, close_id, V_CFG)
+    with torch.no_grad():
+        v.markers.copy_(torch.stack([torch.full((32,), 3.0), torch.full((32,), -3.0)]))
+        out = v.reader.encoder.get_input_embeddings()(batch["input_ids"])
+    b = torch.arange(len(out))
+    assert torch.equal(out[b, batch["open_pos"]], torch.full((len(b), 32), 3.0))
+    assert torch.equal(out[b, batch["close_pos"]], torch.full((len(b), 32), -3.0))
+
+
+def test_adapters_come_back_on_after_an_error(marked):
+    open_id, close_id, _, batch, question = marked
+    v = V.SharedLoraVerifier(tiny_reader(), open_id, close_id, V_CFG)
+    _train(v, batch, question, steps=2)
+    with torch.no_grad():
+        on = v(batch)
+        with pytest.raises(KeyError), V.adapters(v.reader.encoder, False):
+            raise KeyError
+        assert torch.equal(v(batch), on)
+
+
+def test_the_verifier_refuses_bad_setups(marked):
+    open_id, close_id, *_ = marked
+    bad = load_config(None, ["verifier.lora.targets=[no_such_module]"])
+    with pytest.raises(Exception, match="not found in the base model"):
+        V.SharedLoraVerifier(tiny_reader(), open_id, close_id, {**V_CFG, "verifier": bad["verifier"]})
+    with pytest.raises(ValueError, match="outside the embedding table"):
+        V.SharedLoraVerifier(tiny_reader(), 128100, 128101, V_CFG)
+
+
+# The listwise loss and the combination.
+
+def test_listwise_loss_matches_brute_force():
+    scores = torch.tensor([2.0, 0.5, -1.0, 0.3, 1.2])
+    question = torch.tensor([0, 0, 0, 1, 1])
+    targets = torch.tensor([0.7, 0.3, 0.0, 0.0, 1.0])
+    got = V.listwise_loss(scores, question, targets, 2)
+    first = torch.log_softmax(scores[:3], 0)
+    want = [-(0.7 * first[0] + 0.3 * first[1]), -torch.log_softmax(scores[3:], 0)[1]]
+    assert got.tolist() == pytest.approx([float(w) for w in want])
+
+
+def test_listwise_loss_ignores_masked_candidates_with_zero_target():
+    scores = torch.tensor([1.0, float("-inf"), 0.0])
+    got = V.listwise_loss(scores, torch.tensor([0, 0, 0]), torch.tensor([1.0, 0.0, 0.0]), 1)
+    assert torch.isfinite(got).all()
+
+
+def test_combine_and_fit_lambda():
+    rng = np.random.default_rng(0)
+    helpful, useless = [], []
+    for _ in range(200):
+        gold = int(rng.integers(5))
+        reader = np.log(rng.dirichlet(np.ones(5)))
+        helpful.append((reader, np.where(np.arange(5) == gold, 2.0, 0.0) + rng.normal(0, 0.3, 5), gold))
+        confident = np.where(np.arange(5) == gold, np.log(0.9), np.log(0.025))
+        useless.append((confident, rng.normal(0, 1, 5), gold))
+    r, s, _ = helpful[0]
+    assert V.combine(r, s, 0.0) == pytest.approx(r - np.logaddexp.reduce(r))   # λ = 0: the reader alone
+    assert V.fit_lambda(helpful) > 0.5                                  # a verifier that knows the answer counts
+    assert V.fit_lambda(useless) <= 0.2                                 # noise, against a sure reader, barely does
+    with pytest.raises(ValueError):
+        V.fit_lambda([])

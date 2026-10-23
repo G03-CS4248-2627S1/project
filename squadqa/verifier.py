@@ -1,4 +1,5 @@
-"""Verifier inputs: in-place candidate markers, shared by both variants (spec §5.3, §5.7 V5).
+"""The verifier: in-place candidate markers, shared by both variants (spec §5.3, §5.7 V5), and the
+shared_lora variant (spec §5.4, §5.7 V4), with its listwise loss and the reader + λ·verifier combination.
 
 A candidate is a word span (i, j) of a passage, inclusive, as in squadqa.data. The verifier reads
 the question and the passage with the candidate marked in place:
@@ -18,9 +19,12 @@ resize_for_markers, which only ever grows them.
 """
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 
 import numpy as np
+import torch
+from torch import nn
 
 OPEN, CLOSE = "<a>", "</a>"
 OPEN_INSERT, CLOSE_INSERT = f" {OPEN} ", f" {CLOSE} "      # a space on each side (spec §5.3)
@@ -128,3 +132,124 @@ def encode(tokenizer, question: str, marked: Marked, open_id: int, close_id: int
             raise RuntimeError(f"{s!r} is not where mark put it")
         pos.append(int(hits[0]))
     return Encoded(ids, pos[0], pos[1])
+
+
+def collate_marked(encs: list[Encoded], pad_id: int) -> dict:
+    """A batch of marked candidates, padded on the right: input_ids and attention_mask (B, T),
+    open_pos and close_pos (B,)."""
+    t = max(len(e.input_ids) for e in encs)
+    ids = torch.full((len(encs), t), pad_id, dtype=torch.long)
+    mask = torch.zeros((len(encs), t), dtype=torch.long)
+    for b, e in enumerate(encs):
+        ids[b, :len(e.input_ids)] = torch.from_numpy(e.input_ids)
+        mask[b, :len(e.input_ids)] = 1
+    return {"input_ids": ids, "attention_mask": mask,
+            "open_pos": torch.tensor([e.open_pos for e in encs]), "close_pos": torch.tensor([e.close_pos for e in encs])}
+
+
+# The shared_lora verifier (spec §5.4; #67): the frozen final reader plus LoRA.
+
+@contextlib.contextmanager
+def adapters(model: nn.Module, enabled: bool):
+    """Switch every LoRA layer in model on or off for the block, then back on. Off, the encoder
+    computes exactly what it did before the adapters were injected (spec §5.4: reader passes)."""
+    from peft.tuners.tuners_utils import BaseTunerLayer
+
+    layers = [m for m in model.modules() if isinstance(m, BaseTunerLayer)]
+    for m in layers:
+        m.enable_adapters(enabled)
+    try:
+        yield
+    finally:
+        for m in layers:
+            m.enable_adapters(True)
+
+
+class SharedLoraVerifier(nn.Module):
+    """The frozen reader (squadqa.heads.Reader) with LoRA on its encoder, two marker embeddings and a
+    scoring head. Only those three train; every reader parameter is frozen (V4).
+
+    The marker embeddings are a separate (2, d) parameter, written over the encoder's word
+    embeddings wherever an input id is OPEN or CLOSE, so the reader's embedding table itself never
+    trains. Training just two rows of the table instead, by masking its gradient, would move every
+    row: AdamW's weight decay ignores a zero gradient (checked 2026-10-23). DeBERTa-v3's table already
+    has rows for the new ids, so nothing is resized either (resize_for_markers is for a tokenizer
+    that outgrows its table). The markers start at the table's mean row.
+
+    forward scores marked candidates with the adapters on; reader_span_scores runs the reader
+    with them off.
+    """
+
+    def __init__(self, reader: nn.Module, open_id: int, close_id: int, cfg: dict):
+        super().__init__()
+        from peft import LoraConfig, inject_adapter_in_model
+
+        for p in reader.parameters():
+            p.requires_grad_(False)
+        lora = cfg["verifier"]["lora"]
+        # peft raises if a target name matches no module (a renamed attention layer, spec §2's note)
+        inject_adapter_in_model(LoraConfig(r=lora["rank"], lora_alpha=lora["alpha"], lora_dropout=0.0,
+                                           target_modules=list(lora["targets"]), bias="none"), reader.encoder)
+        self.reader = reader
+        emb = reader.encoder.get_input_embeddings()
+        if max(open_id, close_id) >= emb.num_embeddings:
+            raise ValueError("a marker id is outside the embedding table; grow it with resize_for_markers first")
+        self.open_id, self.close_id = open_id, close_id
+        self.markers = nn.Parameter(emb.weight.detach().float().mean(0).repeat(2, 1))
+        emb.register_forward_hook(self._insert_markers)
+        d = reader.encoder.config.hidden_size
+        self.head = nn.Sequential(nn.Linear(3 * d, cfg["head_dim"]), nn.GELU(),
+                                  nn.Dropout(cfg["train"]["head_dropout"]), nn.Linear(cfg["head_dim"], 1))
+
+    def _insert_markers(self, module, inputs, output):
+        ids = inputs[0]
+        for k, token in enumerate((self.open_id, self.close_id)):
+            output = torch.where((ids == token)[..., None], self.markers[k].to(output.dtype), output)
+        return output
+
+    def forward(self, batch: dict) -> torch.Tensor:
+        """(B,) scores of a collate_marked batch: [CLS], OPEN and CLOSE states → MLP."""
+        h = self.reader.encoder(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"]).last_hidden_state
+        rows = torch.arange(h.size(0), device=h.device)
+        feats = torch.cat([h[:, 0], h[rows, batch["open_pos"]], h[rows, batch["close_pos"]]], dim=-1)
+        return self.head(feats).squeeze(-1).float()
+
+    def reader_span_scores(self, batch: dict):
+        """The reader's span scores (Reader.span_scores) with the adapters off."""
+        with adapters(self.reader.encoder, False):
+            return self.reader.span_scores(batch)
+
+    def trainable_parameters(self) -> list[nn.Parameter]:
+        return [p for p in self.parameters() if p.requires_grad]
+
+
+def listwise_loss(scores: torch.Tensor, question: torch.Tensor, targets: torch.Tensor,
+                  n_questions: int) -> torch.Tensor:
+    """(n_questions,) cross-entropy between each question's target (squadqa.candidates.targets,
+    summing to 1 over its candidates) and the softmax of its candidates' scores (spec §5.1).
+    scores, question (each candidate's question index) and targets are (N,)."""
+    from squadqa.heads import _segment_logsumexp
+
+    logp = scores - _segment_logsumexp(scores, question, n_questions)[question]
+    contrib = torch.where(targets > 0, targets * logp, torch.zeros_like(logp))     # 0 · −inf stays 0
+    return -torch.zeros(n_questions, device=scores.device, dtype=scores.dtype).index_add(0, question, contrib)
+
+
+def combine(reader_logp: np.ndarray, verifier_score: np.ndarray, lam: float) -> np.ndarray:
+    """Log-probabilities over one list from reader log-probability + λ · verifier score (timeline
+    4.2). λ = 0 is the reader alone."""
+    from squadqa.decode import log_softmax
+
+    return log_softmax(np.asarray(reader_logp, dtype=np.float64) + lam * np.asarray(verifier_score, dtype=np.float64))
+
+
+def fit_lambda(items: list[tuple[np.ndarray, np.ndarray, int | np.ndarray]],
+               grid: tuple[float, ...] = tuple(np.round(np.arange(0, 5.01, 0.1), 2))) -> float:
+    """The λ in grid (it includes 0, the reader alone) with the lowest mean NLL of the gold on the
+    validation lists that hold it: items are (reader_logp, verifier_score, gold index or the
+    indices of its group). Recalibration and decoding come after, as for the reader."""
+    if not items:
+        raise ValueError("no list holds its gold")
+    nll = [float(np.mean([-np.logaddexp.reduce(np.atleast_1d(combine(r, v, lam)[g])) for r, v, g in items]))
+           for lam in grid]
+    return float(grid[int(np.argmin(nll))])

@@ -360,8 +360,9 @@ Not the default: the default candidates are sampled from the final reader (§5.1
 
 ### 5.4 Variants (E2)
 - **`shared_lora`:** load the frozen final reader and add PEFT LoRA (`verifier.lora`) to its encoder.
-  - Reader passes run with the adapter disabled (`with model.disable_adapter():`); verifier passes run with it enabled.
+  - Reader passes run with the adapter disabled (`with model.disable_adapter():`); verifier passes run with it enabled. Built as `squadqa.verifier.SharedLoraVerifier`: LoRA is injected into the reader's encoder in place (`peft.inject_adapter_in_model`), so the reader keeps its structure, and `verifier.adapters(encoder, False)` switches it off (off reproduces the reader exactly, `torch.equal`).
   - Train only the LoRA weights, the two marker embeddings and the verifier head. Keep the existing embedding rows frozen, so the reader is unchanged (test V4).
+    - The marker embeddings are their own 2-row parameter, written over the word embeddings at the marker ids. Training two rows of the table by masking its gradient would move every row, because AdamW's weight decay ignores a zero gradient (checked 2026-10-23).
 - **`separate`:** `verifier.separate_model` (ModernBERT-large), fully fine-tuned with its own tokenizer.
   - Pinned in `MODELS` in `squadqa/download_model.py` (base and large); load it with an explicit dtype (§9).
   - Smoke-test it like any new training script (§9).
