@@ -54,6 +54,7 @@ risk_weight: 0.0                       # β: weight of the expected-F1 (risk) lo
 risk_em_weight: 0.0                    # γ_r: weight of the EM loss inside the risk term, ℒ_risk = Σ p · (ℓ_F1 + γ_r · ℓ_EM) (§4.3); 0 = F1 only. Separate from the decoding γ
 calibration: temperature               # one T, fit on validation split
 extra_train_data: []                   # row 5: [adversarialqa]; augmentation (P2) adds augmented
+continue_from: null                    # a run id: start from that run's checkpoint and follow this config's schedule from its step, e.g. train.epochs 3 after a 2-epoch run; only the epochs may differ (§9)
 train:                                 # reader fine-tuning: the plan's sandbox recipe (plan §15.1); lr and epochs tuned in row 0 (plan §15.3)
   lr: 2.0e-5                           # write floats with a dot: YAML reads 2e-5 as a string
   epochs: 1
@@ -491,6 +492,7 @@ out = flex_attention(q_c, k_c, v, score_mod=score_mod,
 - **Tokenizer:** DeBERTa-v3's fast tokenizer provides character offsets; the offset round-trip test (below) must pass before training.
 - **Offset round-trip test:** for every training question, `context[answer_start : answer_start + len(text)] == text` (true for all rows in the official files), and the word span built from §3.2–3.3 maps back to identical text, except for the 265 logged misaligned answers.
 - **Slurm:** checkpoint every N steps; resume automatically; default GPU jobs run at most 3 hours.
+- **Continuing a finished run** (`continue_from`): the new run starts from the source run's checkpoint (model, optimizer state and step) and follows its own schedule from that step, so `train.epochs: 3` after a 2-epoch run trains epoch 3 at the learning rate a 3-epoch schedule has there, decaying to 0. Only `train.epochs` may differ from the source's config, and the seed must match. Its first epochs followed the shorter schedule, so it is not a run trained for the longer schedule from the start; report it as a continuation.
 - **Runs:** save config, git commit hash, and seed with every run under `results/<run_id>/`.
 
 ---
