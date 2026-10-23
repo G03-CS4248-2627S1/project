@@ -180,7 +180,7 @@ def eval_questions(name: str):
 ADDED_KEYS = {"f1_target_weight": 0.0, "f1_target_temperature": 0.1, "f1_target_floor": 0.5,
               "risk_weight": 0.0, "risk_em_weight": 0.0, "target_unit": "span",
               "no_answer": False, "length_bias": True, "bilinear_form": "full", "bilinear_rank": 64, "bilinear_pos": "none",
-              "window_layout": "left"}
+              "window_layout": "left", "continue_from": None}
 # Config keys renamed after some runs were trained: old name -> current name.
 RENAMED_KEYS = {"f1_target": "loss_utility"}
 

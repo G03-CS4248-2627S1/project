@@ -22,6 +22,15 @@ learning rate has not decayed to zero yet; confirm the chosen setting with a rea
 checkpoint.pt) as $SQUADQA_SCRATCH/runs/<run_id>/model_epoch<k>.pt, without optimizer state, so
 about a third of a checkpoint's size; load_checkpoint reads it.
 
+continue_from (a config key) names a finished run to carry on from: a run with no checkpoint of its
+own starts from that run's checkpoint (model, optimizer state and step) and follows its own config's
+schedule from that step. With train.epochs 3 after a 2-epoch run, epoch 3 starts at the learning rate
+a 3-epoch schedule has at that step (a third of the decay left after warmup) and decays to 0, on the
+shuffle of a 3-epoch run's third epoch. Only train.epochs may differ from the source run's config,
+and the seed must match. This is not a 3-epoch run: the first epochs followed the shorter schedule,
+whose learning rate had reached 0. The source run's last model was already scored, so the epoch hooks
+don't repeat it.
+
 --max-steps and --stop-after are for smoke runs (spec §9): --max-steps shortens the schedule,
 --stop-after exits after that step without predicting, as if the job had been killed; resume
 with the same arguments minus --stop-after (it is not part of the config, so the resume check passes).
@@ -106,6 +115,32 @@ def load_checkpoint(path: Path, model, opt=None, sched=None) -> int:
     return ck["step"]
 
 
+def continuation_source(cfg: dict, seed: int) -> Path | None:
+    """The checkpoint of the run cfg["continue_from"] names, or None. Raises unless that run had this
+    seed and this config but fewer epochs (the shuffles depend on the seed, the weights on the rest)."""
+    from squadqa import predict as P
+
+    source = cfg["continue_from"]
+    if source is None:
+        return None
+
+    def flat(c: dict) -> dict:
+        out = {k: v for k, v in c.items() if k not in ("train", "continue_from")}
+        out.update({f"train.{k}": v for k, v in c["train"].items() if k != "epochs"})
+        return out
+    theirs = P.run_config(source)
+    differ = sorted(k for k in flat(cfg).keys() | flat(theirs).keys() if flat(cfg).get(k) != flat(theirs).get(k))
+    if differ:
+        raise ValueError(f"continue_from {source}: its config differs in {differ}; only train.epochs may change")
+    info = json.loads((P.RESULTS / source / "run.json").read_text(encoding="utf-8"))
+    if info["seed"] != seed:
+        raise ValueError(f"continue_from {source}: it was trained with seed {info['seed']}, this run has seed {seed}")
+    if theirs["train"]["epochs"] >= cfg["train"]["epochs"]:
+        raise ValueError(f"continue_from {source}: it trained {theirs['train']['epochs']} epochs; "
+                         f"train.epochs must be more, got {cfg['train']['epochs']}")
+    return Path(C.env("SQUADQA_SCRATCH")) / "runs" / source / CHECKPOINT
+
+
 def micro_batches(example_ids: list[int], per_device: int, n_windows: list[int] | None = None) -> list[list[int]]:
     """Split one optimizer step's questions into forward passes of at most per_device windows.
 
@@ -129,11 +164,13 @@ def micro_batches(example_ids: list[int], per_device: int, n_windows: list[int] 
 
 def train(model, feats: D.Features, cfg: dict, seed: int, pad_id: int, ckpt_path: Path, per_device: int,
           device: str, max_steps: int | None = None, stop_after: int | None = None, log=print,
-          on_epoch_end=None, save_each_epoch: bool = False) -> dict:
+          on_epoch_end=None, save_each_epoch: bool = False, continue_from: Path | None = None) -> dict:
     """Train with resume from ckpt_path. Returns {"steps", "stopped_early", "losses", "minutes"}.
     After epoch k (not the last), once a checkpoint of that step is saved: with save_each_epoch the
     model's parameters go to model_epoch<k>.pt next to ckpt_path, then on_epoch_end(k) runs. A run
-    resumed from such a checkpoint repeats both, since the job may have stopped before they finished."""
+    resumed from such a checkpoint repeats both, since the job may have stopped before they finished.
+    continue_from: another run's checkpoint to start from while ckpt_path does not exist yet; this
+    config's schedule takes over at its step (module docstring)."""
     t = cfg["train"]
     n_batches = len(D.bucket_batches(feats.question_lengths(), t["effective_batch"], seed, 0))
     total_steps = max_steps or n_batches * t["epochs"]
@@ -147,12 +184,19 @@ def train(model, feats: D.Features, cfg: dict, seed: int, pad_id: int, ckpt_path
             on_epoch_end(k)
         model.train()
 
-    step = 0
-    if ckpt_path.exists():
+    step, resumed = 0, ckpt_path.exists()
+    if resumed:
         step = load_checkpoint(ckpt_path, model, opt, sched)
         log(f"resumed from step {step}")
+    elif continue_from is not None:
+        step = load_checkpoint(continue_from, model, opt, sched)
+        if step >= total_steps:
+            raise ValueError(f"{continue_from} is at step {step} and this schedule ends at {total_steps}")
+        for group, lr_at in zip(opt.param_groups, sched.lr_lambdas):   # the source's schedule had reached its end
+            group["lr"] = group["initial_lr"] * lr_at(step)
+        log(f"continued from step {step} of {continue_from.parent.name} at lr {opt.param_groups[0]['lr']:.2e}")
     check_fp32(model, opt)
-    if hooks and 0 < step < total_steps and step % n_batches == 0:
+    if resumed and hooks and 0 < step < total_steps and step % n_batches == 0:
         end_epoch(step // n_batches)
     use_amp = device.startswith("cuda")
     lengths = feats.question_lengths()
@@ -213,6 +257,7 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     cfg = C.load_config(args.config, args.set)
+    source = continuation_source(cfg, args.seed)
     run_dir = C.start_run(cfg, args.config, args.seed, args.run_id)
     ckpt_dir = Path(C.env("SQUADQA_SCRATCH")) / "runs" / run_dir.name
     ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -241,7 +286,8 @@ def main(argv: list[str] | None = None) -> None:
 
     result = train(model, feats, cfg, args.seed, tok.pad_token_id, ckpt_dir / CHECKPOINT, args.per_device_batch,
                    device, args.max_steps, args.stop_after, log=lambda m: print(m, flush=True),
-                   on_epoch_end=eval_epoch if args.eval_each_epoch else None, save_each_epoch=args.save_each_epoch)
+                   on_epoch_end=eval_epoch if args.eval_each_epoch else None, save_each_epoch=args.save_each_epoch,
+                   continue_from=source)
     if result["stopped_early"]:
         print(f"stopped after step {result['steps']} (--stop-after); rerun with --run-id {run_dir.name} to resume",
               flush=True)

@@ -30,7 +30,8 @@ risk_weight: 0.0                       # β: weight of the expected-F1 (risk) lo
 risk_em_weight: 0.0                    # γ_r: weight of the EM loss inside the risk term, ℒ_risk = Σ p · (ℓ_F1 + γ_r · ℓ_EM) (§4.3); 0 = F1 only. Separate from the decoding γ
 calibration: temperature               # one T, fit on validation split
 extra_train_data: []                   # row 5: [adversarialqa]; augmentation (P2) adds augmented
-train:                                 # reader fine-tuning: the plan's sandbox recipe (plan §15.1); lr and epochs tuned in row 0 (plan §15.3)
+continue_from: null                    # a run id: start from that run's checkpoint and follow this config's schedule from its step, e.g. train.epochs 3 after a 2-epoch run; only the epochs may differ (§9)
+train:                               # reader fine-tuning: the plan's sandbox recipe (plan §15.1); lr and epochs tuned in row 0 (plan §15.3)
   lr: 2.0e-5                           # write floats with a dot: YAML reads 2e-5 as a string
   epochs: 1
   warmup_frac: 0.1                     # linear schedule, warmup over this fraction of the steps
