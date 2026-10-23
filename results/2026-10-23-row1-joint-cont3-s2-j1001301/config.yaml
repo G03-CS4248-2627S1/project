@@ -1,0 +1,67 @@
+model: microsoft/deberta-v3-large
+precision: bf16
+max_seq_len: 384
+doc_stride: 128
+window_layout: even
+padding: dynamic
+max_answer_words: 30
+span_head: joint
+aux_independent_weight: 1.0
+head_dim: 256
+W_init: zeros
+bilinear_form: full
+bilinear_rank: 64
+length_bias: false
+bilinear_pos: none
+no_answer: false
+decode_topk: 10
+decode_rules:
+- map
+- mbr
+mbr_em_weight: 1.0
+mbr_utility: normalized
+loss_utility: normalized
+f1_target_weight: 0.0
+f1_target_temperature: 0.1
+f1_target_floor: 0.5
+target_unit: group
+risk_weight: 0.0
+risk_em_weight: 0.0
+calibration: temperature
+extra_train_data: []
+continue_from: 2026-10-23-row1-joint-s2-j998397
+train:
+  lr: 2.0e-05
+  epochs: 3
+  warmup_frac: 0.1
+  weight_decay: 0.01
+  effective_batch: 32
+  grad_clip: 1.0
+  head_dropout: 0.1
+  checkpoint_every: 500
+verifier:
+  variant: shared_lora
+  separate_model: answerdotai/ModernBERT-large
+  type: in_place
+  shared_option: B
+  lora:
+    rank: 16
+    alpha: 32
+    targets:
+    - query_proj
+    - key_proj
+    - value_proj
+  k_infer: 5
+  k_sweep:
+  - 5
+  - 10
+  - 20
+  - 30
+  train_candidates: sampled
+  crossfit_folds: 3
+  sibling_negatives: false
+  unanswerable_negatives: false
+seeds:
+- 0
+- 1
+- 2

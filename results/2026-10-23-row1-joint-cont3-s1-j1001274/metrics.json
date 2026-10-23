@@ -1,0 +1,30 @@
+{
+  "validation": {
+    "map": {
+      "exact": 76.44006227296316,
+      "f1": 89.24940071304542,
+      "total": 7708
+    },
+    "mbr": {
+      "exact": 76.51790347690711,
+      "f1": 89.37991273741969,
+      "total": 7708
+    }
+  },
+  "calibration": {
+    "temperature": 1.412783554438448,
+    "nll_at_1": 0.9476860095095717,
+    "nll": 0.8407091172744486,
+    "questions": 7681,
+    "left_out": 27,
+    "unit": "group"
+  },
+  "steps": 7461,
+  "train_minutes_last_job": 15.1,
+  "gpu": "NVIDIA H100 NVL MIG 3g.47gb",
+  "per_device_batch": 8,
+  "peak_gpu_gb": {
+    "train": 16.4,
+    "predict": 9.5
+  }
+}
