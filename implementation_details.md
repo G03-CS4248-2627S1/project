@@ -352,7 +352,8 @@ Not the default: the default candidates are sampled from the final reader (§5.1
 4. At test time use the reader trained on all non-validation training articles.
 
 ### 5.3 In-place markers (both variants)
-- Insert the marker strings `<a>` and `</a>` into the passage text around the candidate's characters, with a space on each side, then tokenize. Register them as special tokens in each variant's tokenizer and resize its embeddings. Inserting text before tokenizing works with both tokenizers.
+- Insert the marker strings `<a>` and `</a>` into the passage text around the candidate's characters, with a space on each side, then tokenize. Register them as special tokens in each variant's tokenizer and resize its embeddings. Inserting text before tokenizing works with both tokenizers (`squadqa/verifier.py`; test V5 checks both).
+  - **Never shrink the embeddings.** DeBERTa-v3's matrix has 128,100 rows but its tokenizer only 128,001 entries, so with the markers `len(tokenizer)` is 128,003 and `resize_token_embeddings(len(tokenizer))` would cut the reader's matrix (checked 2026-10-23). Use `squadqa.verifier.resize_for_markers`, which only grows it; for DeBERTa-v3 it adds nothing, since the markers take spare rows.
 - Input: the question and the passage. Most passages fit one window. Otherwise keep the window (§3.4, reader tokenizer) in which the candidate is most central, as a character range, and give both variants that same range, so E2 compares backbones on identical text.
 - Head: concatenate hidden states at `<a>`, `</a>` and the first token (`[CLS]`) → MLP → one score.
 - One forward pass per candidate.
