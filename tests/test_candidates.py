@@ -208,9 +208,27 @@ def test_summary_of_inference_lists():
     assert s["top1"] == pytest.approx({"correct": 1 / 3, "partial": 1 / 3, "disjoint": 1 / 3})
 
 
+def test_recall_em_counts_a_boundary_variant_and_recall_does_not():
+    """A reader trained per group often ranks "the X" above the annotated "X": a hit for recall_em
+    (EM 1 under normalized) but not for recall (the annotated span by position)."""
+    lists = [_list([-0.1, -2.0, -3.0], [1, 1, 0], [1, 1, 0], 1)]     # top-1 a variant, the gold second
+    s = C.summary(lists, "validation")
+    assert s["recall@1"] == 0 and s["recall_em@1"] == 1
+    assert s["recall@2"] == 1 and s["recall_em@2"] == 1
+
+
+def test_sampled_em_sees_a_variant_the_sample_found():
+    s = all_spans(len(WORDS))
+    gold = (word("World"), word("Fair"))
+    variant = s.index((word("World") - 1, word("Fair")))                # "the World's Fair"
+    only_variant = SpanScores(s.starts, s.ends, np.where(np.arange(len(s.scores)) == variant, 50.0, -50.0).astype(np.float32))
+    c = C.training_list(only_variant, gold, 1, 1.0, np.random.default_rng(0), FLAGS, 1.0)
+    assert not c.sampled_gold and c.sampled_em
+
+
 def test_summary_of_training_lists():
     s = C.summary([_list([0.0], [1], [1], 0, True), _list([0.0, 0.0], [1, 0], [1, 0], 0, False)], "train")
-    assert s["sampled_gold"] == 0.5 and s["mean_size"] == 1.5 and "recall@1" not in s
+    assert s["sampled_gold"] == 0.5 and s["mean_size"] == 1.5 and "recall@1" not in s and "sampled_em" in s
 
 
 # The entry point end to end, as a cluster job runs it, with a tiny reader in place of the checkpoint.
@@ -254,7 +272,8 @@ def test_main_writes_the_lists_and_summary(split, tmp_path, monkeypatch):
     assert summary["run_id"] == run_id and summary["temperature"] == 1.3
     assert ("recall@5" in summary) == (split == "validation") and ("sampled_gold" in summary) == (split == "train")
     first = next(iter(lists.values()))
-    assert set(first) == {"spans", "logp", "f1", "em", "gold", "sampled_gold"}
+    assert set(first) == {"spans", "logp", "f1", "em", "gold", "sampled_gold", "sampled_em"}
+    assert ("recall_em@5" in summary) == (split == "validation") and ("sampled_em" in summary) == (split == "train")
 
 
 # The real data path (tokenizer, windows, one softmax per question) with a random scorer.

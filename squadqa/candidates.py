@@ -45,6 +45,7 @@ class CandidateList:
     em: np.ndarray
     gold: int | None            # position of the annotated span in the list, None if absent
     sampled_gold: bool          # the gold was among the sampled (training) or top-k (inference) spans
+    sampled_em: bool = False    # some sampled / top-k span has EM 1 (the gold or a boundary variant)
 
     def to_json(self) -> dict:
         """JSON-ready, with null F1 and EM for a question without a word-aligned gold."""
@@ -52,7 +53,7 @@ class CandidateList:
                 "logp": [round(float(x), 6) for x in self.logp],
                 "f1": [None if np.isnan(x) else round(float(x), 6) for x in self.f1],
                 "em": [None if np.isnan(x) else int(x) for x in self.em],
-                "gold": self.gold, "sampled_gold": self.sampled_gold}
+                "gold": self.gold, "sampled_gold": self.sampled_gold, "sampled_em": self.sampled_em}
 
 
 def question_rng(seed: int, question_id: str) -> np.random.Generator:
@@ -89,9 +90,10 @@ def _build(spans: SpanScores, picked: np.ndarray, sampled: np.ndarray, gold: tup
     else:
         f1, em = span_f1_em(flags, starts, ends, gold[0], gold[1])
     pos = None if g is None else np.flatnonzero(keep == g)
+    hit_em = g is not None and bool((span_f1_em(flags, spans.starts[sampled], spans.ends[sampled], gold[0], gold[1])[1] == 1).any())
     return CandidateList(starts, ends, span_logp(spans, temperature)[0][keep], f1, em,
                          None if pos is None or not len(pos) else int(pos[0]),
-                         g is not None and bool(np.isin(g, sampled)))
+                         g is not None and bool(np.isin(g, sampled)), hit_em)
 
 
 def training_list(spans: SpanScores, gold: tuple[int, int], k: int, sample_temperature: float,
@@ -137,9 +139,10 @@ def targets(f1: np.ndarray, em: np.ndarray, gold: int, alpha: float, tau: float,
 def summary(lists: list[CandidateList], split: str) -> dict:
     """What a split's lists look like.
 
-    training: list sizes, and how often the sample held the gold before it was added (a check on
-    sample_temperature: the verifier should see the gold missing about as often as top-k misses it
-    at inference).
+    training: list sizes, and how often the sample held the gold before it was added: the annotated
+    span (sampled_gold) or any EM 1 span (sampled_em). A check on sample_temperature: the verifier
+    should see the answer missing about as often as top-k misses it at inference (compare
+    sampled_em with validation recall_em@k_infer).
     inference: top-k recall for each k up to the list size (the verifier's ceiling, spec §5.1),
     and what the reader's top-1 is: correct (EM 1), partial (F1 > 0) or disjoint (F1 0).
     """
@@ -147,12 +150,21 @@ def summary(lists: list[CandidateList], split: str) -> dict:
     out = {"questions": len(lists), "mean_size": float(sizes.mean()), "max_size": int(sizes.max())}
     if split == "train":
         out["sampled_gold"] = float(np.mean([c.sampled_gold for c in lists]))
+        out["sampled_em"] = float(np.mean([c.sampled_em for c in lists]))
         return out
     scored = [c for c in lists if not np.isnan(c.f1).all()]       # questions with a word-aligned gold
     out["with_gold"] = len(scored)
     ranks = [int((c.logp > c.logp[c.gold]).sum()) if c.gold is not None else None for c in scored]
+    # Two definitions of "found" (both over the questions with a word-aligned gold):
+    # recall@k: the annotated span itself, by position, is in the top k (spec §5.1's wording);
+    # recall_em@k: some top-k candidate has EM 1 under loss_utility, so a boundary variant counts,
+    # the unit a reader trained with target_unit group aims at. squadqa.report's top-k recall uses
+    # the official scorer instead, which also accepts the same text elsewhere (rule 4 doesn't).
+    first_em = [int(np.flatnonzero(c.em[np.argsort(-c.logp, kind="stable")] == 1)[0])
+                if (c.em == 1).any() else None for c in scored]
     for k in range(1, int(sizes.min()) + 1):
         out[f"recall@{k}"] = float(np.mean([r is not None and r < k for r in ranks]))
+        out[f"recall_em@{k}"] = float(np.mean([r is not None and r < k for r in first_em]))
     top = [int(np.argmax(c.logp)) for c in scored]
     em = np.array([c.em[t] for c, t in zip(scored, top)])
     f1 = np.array([c.f1[t] for c, t in zip(scored, top)])
