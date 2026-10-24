@@ -47,9 +47,11 @@ class CandidateList:
     sampled_gold: bool          # the gold was among the sampled (training) or top-k (inference) spans
 
     def to_json(self) -> dict:
+        """JSON-ready, with null F1 and EM for a question without a word-aligned gold."""
         return {"spans": [[int(a), int(b)] for a, b in zip(self.starts, self.ends)],
                 "logp": [round(float(x), 6) for x in self.logp],
-                "f1": [round(float(x), 6) for x in self.f1], "em": [int(x) for x in self.em],
+                "f1": [None if np.isnan(x) else round(float(x), 6) for x in self.f1],
+                "em": [None if np.isnan(x) else int(x) for x in self.em],
                 "gold": self.gold, "sampled_gold": self.sampled_gold}
 
 

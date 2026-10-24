@@ -126,6 +126,19 @@ def test_inference_list_without_a_gold_has_no_labels():
     assert c.gold is None and np.isnan(c.f1).all()
 
 
+def test_lists_save_as_strict_json_with_and_without_a_gold():
+    """A validation question whose gold isn't word-aligned has no labels; they save as null."""
+    import json
+    s = all_spans(len(WORDS))
+    for gold in (None, (word("1889"),) * 2):
+        out = json.loads(json.dumps(C.inference_list(s, 5, FLAGS, 1.0, gold).to_json(), allow_nan=False))
+        assert len(out["spans"]) == len(out["f1"]) == len(out["em"]) == 5
+        if gold is None:
+            assert out["f1"] == [None] * 5 and out["em"] == [None] * 5
+    t = C.training_list(s, (word("1889"),) * 2, 8, 2.0, np.random.default_rng(0), FLAGS, 1.0).to_json()
+    assert all(isinstance(x, int) for x in t["em"]) and t["gold"] is not None
+
+
 def test_build_lists_does_not_depend_on_the_batch():
     def example(qid, gold):
         q = SimpleNamespace(id=qid, context=CONTEXT)
