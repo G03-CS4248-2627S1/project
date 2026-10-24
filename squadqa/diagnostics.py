@@ -99,7 +99,7 @@ def cross_spans(feats: Features, spans: list[SpanScores], cfg: dict, temperature
     picks: dict[str, set[str]] = {rule: set() for rule in cfg["decode_rules"]}
     for ex, s in zip(feats.examples, spans):
         q = ex.question
-        flags = content_flags(q.context, ex.context.words)
+        flags = content_flags(q.context, ex.context.words, cfg.get("content_ignore_words"))
         x = rows[q.id] = cross_span(s, flags, temperature)
         cands = top_k(s, cfg["decode_topk"], temperature)
         texts = [answer_text(q.context, ex.context.words, a, b) for a, b in zip(cands.starts, cands.ends)]

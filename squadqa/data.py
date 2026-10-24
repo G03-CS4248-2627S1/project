@@ -337,7 +337,7 @@ def featurize(questions: list[Question], tokenizer, cfg: dict, training: bool) -
 
     from squadqa.decode import content_flags        # here: squadqa.decode imports this module
 
-    flags = {c: content_flags(c, ctx.words) for c, ctx in contexts.items()}
+    flags = {c: content_flags(c, ctx.words, cfg.get("content_ignore_words")) for c, ctx in contexts.items()}
     layout = pair_layout(tokenizer)
     question_ids = tokenizer([ex.question.question for ex in examples], add_special_tokens=False)["input_ids"]
     for e, (ex, q_ids) in enumerate(zip(examples, question_ids)):

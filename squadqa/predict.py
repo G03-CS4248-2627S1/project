@@ -65,7 +65,8 @@ def score_questions(score_fn, feats: Features, pad_id: int, max_answer_words: in
     return out
 
 
-def calibrate(feats: Features, spans: list[SpanScores], unit: str = "span") -> dict:
+def calibrate(feats: Features, spans: list[SpanScores], unit: str = "span",
+              ignored_words: list[str] | None = None) -> dict:
     """Fit the temperature on these questions (the validation split) against each question's
     annotated answer: its span, or with unit "group" (target_unit) the summed probability of its
     group of boundary variants, the unit the reader was trained on. Questions whose answer is not a
@@ -74,7 +75,8 @@ def calibrate(feats: Features, spans: list[SpanScores], unit: str = "span") -> d
     items = []
     for ex, s in zip(feats.examples, spans):
         if unit == "group" and ex.gold is not None:
-            g = group_members(content_flags(ex.question.context, ex.context.words), s.starts, s.ends, ex.gold)
+            g = group_members(content_flags(ex.question.context, ex.context.words, ignored_words),
+                              s.starts, s.ends, ex.gold)
             g = g if len(g) else None
         else:
             g = s.index(ex.gold)
@@ -108,7 +110,7 @@ def decode_questions(feats: Features, spans: list[SpanScores], cfg: dict,
     cands_out: dict[str, list] = {}
     for ex, s in zip(feats.examples, spans):
         q = ex.question
-        flags = content_flags(q.context, ex.context.words)
+        flags = content_flags(q.context, ex.context.words, cfg.get("content_ignore_words"))
         cands = top_k(s, cfg["decode_topk"], temperature)
         texts = [answer_text(q.context, ex.context.words, a, b) for a, b in zip(cands.starts, cands.ends)]
         for rule in cfg["decode_rules"]:
@@ -151,7 +153,7 @@ def predict_split(model, tok, cfg: dict, run_dir: Path, device: str, split: str,
     feats = featurize(questions, tok, cfg, training=False)
     spans = score_questions(reader_score_fn(model, device), feats, tok.pad_token_id, cfg["max_answer_words"],
                             batch_size, device)
-    cal = calibrate(feats, spans, cfg["target_unit"]) if temperature is None else None
+    cal = calibrate(feats, spans, cfg["target_unit"], cfg.get("content_ignore_words")) if temperature is None else None
     t = cal["temperature"] if cal else temperature
     preds, cands = decode_questions(feats, spans, cfg, t)
     write_outputs(run_dir, split, preds, cands if save_candidates else None, cal)
@@ -179,6 +181,7 @@ def eval_questions(name: str):
 # were trained (the row-0 runs have none of them; at f1_target_weight 0, τ and φ are unused).
 ADDED_KEYS = {"f1_target_weight": 0.0, "f1_target_temperature": 0.1, "f1_target_floor": 0.5,
               "risk_weight": 0.0, "risk_em_weight": 0.0, "target_unit": "span",
+              "content_ignore_words": ["a", "an", "the"],
               "no_answer": False, "length_bias": True, "bilinear_form": "full", "bilinear_rank": 64, "bilinear_pos": "none",
               "window_layout": "left", "continue_from": None}
 # Config keys renamed after some runs were trained: old name -> current name.

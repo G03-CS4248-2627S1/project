@@ -1,0 +1,15 @@
+# Row 1 training ablation: keep the frozen row1-joint recipe and broaden the
+# normalized gold group to include common prepositions. The official scorer
+# still removes only articles and punctuation. Compare against row1-joint seed 0
+# at the same epoch; this variant deliberately tests that mismatch.
+span_head: joint
+bilinear_form: full
+bilinear_pos: none
+length_bias: false
+no_answer: false
+target_unit: group
+f1_target_weight: 0.0
+risk_weight: 0.0
+content_ignore_words: [a, an, the, of, in, on, at, to, for, by, with, from, as]
+train:
+  epochs: 2
