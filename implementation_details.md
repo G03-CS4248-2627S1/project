@@ -71,8 +71,8 @@ verifier:
   shared_option: B                     # levitated_shared only (P3): A = fully shared multi-task, B = frozen reader + marker-only LoRA
   lora: {rank: 16, alpha: 32, targets: [query_proj, key_proj, value_proj]}   # shared_lora and option B; check module names in the installed HF version
   k_infer: 5
-  k_train: 8                           # spans sampled per training question, before the gold and its boundary variants are added (squadqa.candidates; provisional, #66)
-  sample_temperature: 2.0              # divides the reader's raw span scores when sampling training candidates, above 1 so the lists hold more than the reader's favourites; provisional, tuned on validation (#66)
+  k_train: 8                           # spans sampled per training question, before the gold and its boundary variants are added (squadqa.candidates; #66): lists of 10.4 on average
+  sample_temperature: 2.0              # divides the reader's raw span scores when sampling training candidates, above 1 so the lists hold more than the reader's favourites; tuned on validation (#66, 24 Oct): the samples hold an EM-1 span 93.9% of the time, as the validation top-5 does (94.0%)
   k_sweep: [5, 10, 20, 30]             # levitated variants only (P3)
   train_candidates: sampled            # sampled = drawn from the final reader's own span distribution (plan §4.3) | crossfit (E2 ablation)
   crossfit_folds: 3                    # crossfit ablation only, on base
@@ -345,6 +345,7 @@ risk = (logp.exp() * torch.where(valid, span_loss, torch.zeros_like(span_loss)))
 - **Loss:** listwise. Softmax over a question's candidate scores; F1-soft target over the candidates (same α, τ, φ form and the same `loss_utility` as §4.3); cross-entropy.
 - **Unanswerable negatives** (`unanswerable_negatives: true`, row 5): append a null candidate with a fixed score of 0 to every training question's list. Answerable questions give it target 0; the unanswerable questions of §3.6 put all target mass on it. Inference never adds the null candidate.
 - Track **top-k recall** (fraction of questions whose gold span is among the candidates). It caps verifier accuracy.
+  - `squadqa.candidates` reports it two ways: `recall@k`, the annotated span by position, as worded here, and `recall_em@k`, some candidate with EM 1 under `loss_utility`, so boundary variants count. A reader trained with `target_unit: group` often ranks a variant first, so they differ most at k = 1: row 1 seed 0 gave 0.667 vs 0.761 @1 and 0.921 vs 0.940 @5 (#66). `squadqa.report`'s top-k recall uses the official scorer, which also accepts the same text elsewhere (0.767 / 0.937).
 
 ### 5.2 Cross-fitting (K = 3, E2 ablation only)
 Not the default: the default candidates are sampled from the final reader (§5.1). Run on base.
