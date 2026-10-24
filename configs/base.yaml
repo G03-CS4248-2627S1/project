@@ -21,6 +21,7 @@ decode_topk: 10
 decode_rules: [map, mbr]               # always report both
 mbr_em_weight: 1.0                     # γ, the F1:EM decoding ratio: MBR utility F1 + γ·EM; 0 = expected F1
 mbr_utility: normalized                # normalized = content-word F1/EM, boundary variants grouped | positional | string = the scorer's normalization at any position (both E1 rows; §4.4)
+content_ignore_words: [a, an, the]     # words ignored in normalized span groups for training/calibration/MBR; official scorer is fixed
 loss_utility: normalized               # F1 and EM between a span and the gold in the losses (F1 target, risk): normalized = content-word F1/EM, boundary variants exact | positional (ablation; §4.3)
 f1_target_weight: 0.0                  # α, the F1:EM loss ratio (§4.3); 0 = one-hot target (rows 0–1), tuned in E1
 f1_target_temperature: 0.1             # τ: how evenly the F1 credit is spread
