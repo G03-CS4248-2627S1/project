@@ -1,0 +1,11 @@
+{
+  "run_id": "2026-10-24-row1-joint-left-s0-j1005976",
+  "experiment": "row1-joint",
+  "config_file": "configs/experiments/row1-joint.yaml",
+  "seed": 0,
+  "git_commit": "cb37b47fa215f6b309c9eb31ba52135bb8051163",
+  "git_dirty": false,
+  "slurm_job_id": "1005976",
+  "host": "xgpk0",
+  "started": "2026-10-24T11:08:55"
+}
