@@ -216,6 +216,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"{min(c + args.chunk, len(questions))}/{len(questions)} questions", flush=True)
 
     out_dir = Path(env("SQUADQA_SCRATCH")) / "candidates" / args.run_id
+    out_dir.mkdir(parents=True, exist_ok=True)
     write_json(out_dir / f"candidates_{args.split}.json", {q: c.to_json() for q, c in lists.items()})
     info = {"run_id": args.run_id, "checkpoint_step": step, "split": args.split, "seed": args.seed,
             "temperature": temperature, "skipped": skipped, **list_cfg, **summary(list(lists.values()), args.split)}

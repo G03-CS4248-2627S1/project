@@ -213,6 +213,50 @@ def test_summary_of_training_lists():
     assert s["sampled_gold"] == 0.5 and s["mean_size"] == 1.5 and "recall@1" not in s
 
 
+# The entry point end to end, as a cluster job runs it, with a tiny reader in place of the checkpoint.
+
+@pytest.mark.parametrize("split", ["validation", "train"])
+def test_main_writes_the_lists_and_summary(split, tmp_path, monkeypatch):
+    """Two jobs (1008523, 1008579) failed after scoring, while saving: once on int(NaN), once on a
+    missing output folder. This runs main() itself, chunks and all, into a fresh scratch folder."""
+    torch = pytest.importorskip("torch")
+    transformers = pytest.importorskip("transformers")
+    import json
+    from squadqa import config as Cf, data as D, heads as H, predict as P
+
+    cfg = Cf.load_config("configs/experiments/row1-joint.yaml")
+    try:
+        tok = D.load_tokenizer(cfg["model"])
+    except (OSError, RuntimeError) as e:
+        pytest.skip(f"tokenizer not available: {e}")
+    torch.manual_seed(0)
+    enc = transformers.AutoModel.from_config(transformers.DebertaV2Config(
+        vocab_size=128100, hidden_size=32, num_hidden_layers=1, num_attention_heads=2, intermediate_size=64,
+        max_position_embeddings=512, relative_attention=True, position_buckets=256, pos_att_type=["p2c", "c2p"],
+        type_vocab_size=0, position_biased_input=False))
+    reader = H.Reader(enc, cfg)
+    run_id = "fake-reader-run"
+    (tmp_path / "results" / run_id).mkdir(parents=True)
+    (tmp_path / "results" / run_id / "calibration.json").write_text('{"temperature": 1.3}')
+    real_split = D.load_split
+    monkeypatch.setattr(Cf, "RESULTS", tmp_path / "results")
+    monkeypatch.setattr(P, "load_reader", lambda r, device: (cfg, tok, reader.to(device), 123))
+    monkeypatch.setattr(D, "load_split", lambda name: real_split(name)[:40])
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    monkeypatch.setenv("SQUADQA_SCRATCH", str(tmp_path / "scratch"))     # its candidates/ folder doesn't exist yet
+
+    C.main(["--run-id", run_id, "--split", split, "--chunk", "16", "--batch-size", "8"])
+
+    out = tmp_path / "scratch" / "candidates" / run_id
+    lists = json.loads((out / f"candidates_{split}.json").read_text())
+    summary = json.loads((out / f"summary_{split}.json").read_text())
+    assert summary["questions"] == len(lists) > 30 and summary["checkpoint_step"] == 123
+    assert summary["run_id"] == run_id and summary["temperature"] == 1.3
+    assert ("recall@5" in summary) == (split == "validation") and ("sampled_gold" in summary) == (split == "train")
+    first = next(iter(lists.values()))
+    assert set(first) == {"spans", "logp", "f1", "em", "gold", "sampled_gold"}
+
+
 # The real data path (tokenizer, windows, one softmax per question) with a random scorer.
 
 def test_lists_on_real_questions_with_a_random_reader():
