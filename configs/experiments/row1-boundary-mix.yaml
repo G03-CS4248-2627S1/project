@@ -1,0 +1,18 @@
+# Row 1 loss ablation. The expanded group ignores the listed prepositions;
+# the official group ignores only articles and punctuation. The per-question
+# training loss is 0.5 * NLL(official group) + 0.5 * NLL(expanded group).
+# Decoding uses the expanded flags, exactly as row1-function-words does, so
+# their validation difference isolates the training loss mixture.
+# Both runs are compared with row1-joint under the unchanged official scorer.
+span_head: joint
+bilinear_form: full
+bilinear_pos: none
+length_bias: false
+no_answer: false
+target_unit: group
+f1_target_weight: 0.0
+risk_weight: 0.0
+content_ignore_words: [a, an, the, of, in, on, at, to, for, by, with, from, as]
+expanded_group_weight: 0.5
+train:
+  epochs: 2
