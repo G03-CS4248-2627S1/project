@@ -12,7 +12,7 @@ no_answer: false
 target_unit: group
 f1_target_weight: 0.0
 risk_weight: 0.0
-content_ignore_words: [a, an, the, of, in, on, at, to, for, by, with, from, as]
+content_ignore_words: [a, an, the, of, in, "on", at, to, for, by, with, from, as]
 expanded_group_weight: 0.5
 train:
   epochs: 2

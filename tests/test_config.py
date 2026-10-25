@@ -19,6 +19,13 @@ def test_base_only():
     assert cfg["verifier"]["lora"]["rank"] == 16
 
 
+def test_boundary_mix_word_set_keeps_on_as_text():
+    cfg = C.load_config("configs/experiments/row1-boundary-mix.yaml")
+    words = cfg["content_ignore_words"]
+    assert "on" in words
+    assert all(isinstance(word, str) for word in words)
+
+
 def test_experiment_overrides_only_its_keys(tmp_path):
     exp = write_yaml(tmp_path / "row0-baseline.yaml", {"span_head": "standard", "verifier": {"k_infer": 3}})
     cfg = C.load_config(exp)
