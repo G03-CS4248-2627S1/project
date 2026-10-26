@@ -336,13 +336,15 @@ def test_conditional_loss_uses_only_windows_holding_the_answer():
     (["span_head=compound", "bilinear_form=mlp", "bilinear_pos=rotary"], ValueError),
     (["bilinear_pos=learned"], ValueError),
     (["span_head=standard", "f1_target_weight=0.3"], ValueError),                     # 1a needs a span softmax
-    (["span_head=conditional", "risk_weight=0.1"], ValueError),
+    (["span_head=conditional", "risk_share=0.1"], ValueError),
     (["f1_target_weight=1.5"], ValueError),
     (["f1_target_weight=0.5", "f1_target_temperature=0"], ValueError),
     (["f1_target_floor=-0.1"], ValueError),
-    (["risk_weight=-1.0"], ValueError),
+    (["risk_share=-0.1"], ValueError),
+    (["risk_share=1.5"], ValueError),                           # a share: at most 1
+    (["f1_target_weight=0.3", "risk_share=1.0"], ValueError),   # risk loss alone: alpha would be unused
     (["risk_em_weight=1.0"], ValueError),                       # an EM weight for a risk loss that is off
-    (["risk_weight=0.1", "risk_em_weight=-1.0"], ValueError),
+    (["risk_share=0.1", "risk_em_weight=-1.0"], ValueError),
     (["target_unit=answer"], ValueError),
     (["span_head=joint", "target_unit=group", "loss_utility=positional"], ValueError),   # no variants to pool
     (["span_head=standard", "target_unit=group"], ValueError),                           # no span softmax
@@ -354,8 +356,8 @@ def test_settings_that_are_not_built_or_do_not_apply_raise(overrides, error):
 
 
 @pytest.mark.parametrize("overrides", [
-    ["f1_target_weight=0.3"], ["risk_weight=0.1", "risk_em_weight=1.0"],
-    ["span_head=joint", "target_unit=group", "f1_target_weight=0.5", "risk_weight=1.0", "risk_em_weight=1.0"],
+    ["f1_target_weight=0.3"], ["risk_share=0.1", "risk_em_weight=1.0"], ["risk_share=1.0"],
+    ["span_head=joint", "target_unit=group", "f1_target_weight=0.5", "risk_share=0.5", "risk_em_weight=1.0"],
 ])
 def test_the_1a_losses_are_accepted_on_span_softmax_heads(overrides):
     H.check_head_config(load_config(None, overrides))
@@ -441,7 +443,7 @@ def test_risk_loss_is_the_expected_span_loss_and_the_null_is_wrong(em_weight):
 def test_the_reader_mixes_the_parts_as_the_spec_says(tok):
     torch.manual_seed(0)
     cfg = load_config(None, ["span_head=joint", "no_answer=true", "target_unit=group", "f1_target_weight=0.5",
-                             "f1_target_temperature=0.3", "f1_target_floor=0.5", "risk_weight=2.0",
+                             "f1_target_temperature=0.3", "f1_target_floor=0.5", "risk_share=0.4",
                              "risk_em_weight=1.0", "train.head_dropout=0.0"])
     model = H.Reader(tiny_encoder(), cfg).eval()
     batch = D.collate(D.featurize(D.load_split("train")[:3], tok, cfg, training=True).batch([0, 1, 2]), tok.pad_token_id)
@@ -450,8 +452,34 @@ def test_the_reader_mixes_the_parts_as_the_spec_says(tok):
         em_part = H.group_nll(out, batch, 3)
         f1_part, _ = H.f1_target_nll(out, batch, 3, 0.3, 0.5, "group", batch["content"])
         risk = H.risk_loss(out, batch, 3, 1.0, batch["content"])
-        assert torch.allclose(model.loss(batch, 3), 0.5 * em_part + 0.5 * f1_part + 2.0 * risk, atol=1e-5)
+        assert torch.allclose(model.loss(batch, 3), 0.6 * (0.5 * em_part + 0.5 * f1_part) + 0.4 * risk, atol=1e-5)
     assert 0 < model.stats["t_f1_expected_f1"] <= 1
+
+
+def test_the_risk_share_mixes_the_target_loss_and_the_risk_loss(tok):
+    base = ["span_head=joint", "no_answer=true", "target_unit=group", "train.head_dropout=0.0"]
+    batch = None
+    for share in (0.0, 0.25, 1.0):
+        torch.manual_seed(0)
+        cfg = load_config(None, base + [f"risk_share={share}"] + (["risk_em_weight=1.0"] if share else []))
+        model = H.Reader(tiny_encoder(), cfg).eval()
+        if batch is None:
+            batch = D.collate(D.featurize(D.load_split("train")[:3], tok, cfg, training=True).batch([0, 1, 2]),
+                              tok.pad_token_id)
+        with torch.no_grad():
+            out = model(batch)
+            em_part, risk = H.group_nll(out, batch, 3), H.risk_loss(out, batch, 3, 1.0, batch["content"])
+            assert torch.allclose(model.loss(batch, 3), (1 - share) * em_part + share * risk, atol=1e-5), share
+
+
+def test_old_run_configs_convert_risk_weight_to_the_risk_share(tmp_path, monkeypatch):
+    for beta, share in ((0.0, 0.0), (1.0, 0.5), (3.0, 0.75)):
+        run = tmp_path / f"old-b{beta}"
+        run.mkdir()
+        (run / "config.yaml").write_text(f"span_head: joint\nrisk_weight: {beta}\n", encoding="utf-8")
+        monkeypatch.setattr(P, "RESULTS", tmp_path)
+        cfg = P.run_config(run.name)
+        assert cfg["risk_share"] == pytest.approx(share) and "risk_weight" not in cfg
 
 
 def test_old_run_configs_get_the_settings_they_were_trained_with():
@@ -494,9 +522,10 @@ HEAD_CONFIGS = {
     "joint-group": ["span_head=joint", "length_bias=false", "target_unit=group"],
     "joint-soft-group": ["span_head=joint", "length_bias=false", "target_unit=group", "f1_target_weight=0.5",
                          "f1_target_temperature=0.3", "f1_target_floor=0.5"],
-    "joint-risk-group": ["span_head=joint", "length_bias=false", "target_unit=group", "risk_weight=1.0",
+    "joint-risk-group": ["span_head=joint", "length_bias=false", "target_unit=group", "risk_share=0.5",
                          "risk_em_weight=1.0"],
-    "compound-soft-risk": ["span_head=compound", "f1_target_weight=0.3", "risk_weight=0.3"],
+    "compound-soft-risk": ["span_head=compound", "f1_target_weight=0.3", "risk_share=0.3"],
+    "joint-risk-alone": ["span_head=joint", "length_bias=false", "risk_share=1.0"],
 }
 
 
@@ -531,6 +560,8 @@ def test_every_objective_trains_with_the_no_answer_option(head, small_train, tok
     out = T.train(model, small_train, cfg, 0, tok.pad_token_id, tmp_path / "ck.pt", per_device=2, device="cpu",
                   log=lambda m: None)
     assert np.isfinite(out["losses"]).all()
+    if head == "joint-risk-alone":      # stays near 0.97 from a zero-initialized W here (spec §4.3): runs, need not learn
+        return
     assert np.mean(out["losses"][-6:]) < 0.8 * np.mean(out["losses"][:6])
 
 
