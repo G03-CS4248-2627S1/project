@@ -488,6 +488,8 @@ def risk_loss(out: dict, batch: dict, n_examples: int, em_weight: float, counted
 
 def check_head_config(cfg: dict) -> None:
     """Raise on a head setting that is not built or does not apply (spec rule 7: nothing ignored)."""
+    if cfg.get("normalize_loss_weights", False) and cfg["span_head"] != "joint":
+        raise ValueError("normalize_loss_weights is supported only for the joint head")
     if cfg["span_head"] not in HEADS:
         raise ValueError(f"unknown span_head {cfg['span_head']!r}; choose from {HEADS}")
     if cfg["target_unit"] not in ("span", "group"):
@@ -540,6 +542,7 @@ class Reader(nn.Module):
         self.aux_weight = cfg["aux_independent_weight"]
         self.target_unit = cfg["target_unit"]
         self.expanded_group_weight = cfg.get("expanded_group_weight", 1.0)
+        self.normalize_loss_weights = cfg.get("normalize_loss_weights", False)
         self.alpha, self.tau, self.floor = cfg["f1_target_weight"], cfg["f1_target_temperature"], cfg["f1_target_floor"]
         self.beta, self.risk_em_weight, self.loss_utility = cfg["risk_weight"], cfg["risk_em_weight"], cfg["loss_utility"]
         self.stats: dict[str, float] = {}               # the last batch's training checks, for the log
@@ -580,6 +583,8 @@ class Reader(nn.Module):
                 self.stats["t_f1_expected_f1"] = float(expected_f1.mean())
             if self.beta:
                 joint = joint + self.beta * risk_loss(out, batch, n_examples, self.risk_em_weight, counted)
+        if self.normalize_loss_weights:
+            joint = joint / (1 + self.beta)
         return joint if self.kind == "joint" else joint + self.aux_weight * independent_nll(out, batch, n_examples)
 
     def span_scores(self, batch: dict) -> tuple[torch.Tensor, torch.Tensor | None]:

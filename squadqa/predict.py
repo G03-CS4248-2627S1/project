@@ -183,6 +183,7 @@ ADDED_KEYS = {"f1_target_weight": 0.0, "f1_target_temperature": 0.1, "f1_target_
               "risk_weight": 0.0, "risk_em_weight": 0.0, "target_unit": "span",
               "content_ignore_words": ["a", "an", "the"],
               "expanded_group_weight": 1.0,
+              "normalize_loss_weights": False,
               "no_answer": False, "length_bias": True, "bilinear_form": "full", "bilinear_rank": 64, "bilinear_pos": "none",
               "window_layout": "left", "continue_from": None}
 # Config keys renamed after some runs were trained: old name -> current name.

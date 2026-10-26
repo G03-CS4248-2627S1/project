@@ -53,6 +53,7 @@ f1_target_temperature: 0.1             # τ: how evenly the F1 credit is spread
 f1_target_floor: 0.5                   # φ: spans with F1 < φ get no F1 credit; 0 = every overlapping span
 target_unit: span                      # span = targets per span (t_EM on the annotated span) | group = per group of boundary variants, so both parts count the gold answer once (§4.3; needs loss_utility normalized and a joint or compound head, so the default stays span for row 0); ladder row 1 sets group in its config
 risk_weight: 0.0                       # β: weight of the expected-F1 (risk) loss added to the target loss (§4.3); 0 = none
+normalize_loss_weights: false           # joint only: optional experiment dividing the loss by 1+β
 risk_em_weight: 0.0                    # γ_r: weight of the EM loss inside the risk term, ℒ_risk = Σ p · (ℓ_F1 + γ_r · ℓ_EM) (§4.3); 0 = F1 only. Separate from the decoding γ
 calibration: temperature               # one T, fit on validation split
 extra_train_data: []                   # row 5: [adversarialqa]; augmentation (P2) adds augmented
@@ -248,6 +249,9 @@ target_unit group:  ℒ_soft = (1 − α) · (− log p(G*)) + α · (− Σ_G t
 ℒ_risk = Σ_y p(y) · [ℓ_F1(y, y*) + γ_r · ℓ_EM(y, y*)]   # every valid span; no floor; γ_r = 0: F1 only
 ℒ = ℒ_soft + β · ℒ_risk                            # β = risk_weight, γ_r = risk_em_weight (plan §6.2)
 ```
+Experimental `normalize_loss_weights: true` on the joint head divides this objective by `1 + β`.
+The group, F1 soft-target and risk coefficients become `(1-α)/(1+β)`, `α/(1+β)`, and `β/(1+β)`.
+They sum to one. With α = β = 1/3 they are 0.50, 0.25 and 0.25. Defaults and old runs retain the additive objective.
 - **One objective for every training variant** (plan §6.2):
 
   | | β = 0 | β > 0 |
