@@ -178,20 +178,28 @@ def eval_questions(name: str):
 # Config keys added after some runs were trained, with the values that reproduce how those runs
 # were trained (the row-0 runs have none of them; at f1_target_weight 0, τ and φ are unused).
 ADDED_KEYS = {"f1_target_weight": 0.0, "f1_target_temperature": 0.1, "f1_target_floor": 0.5,
-              "risk_weight": 0.0, "risk_em_weight": 0.0, "target_unit": "span",
+              "risk_share": 0.0, "risk_em_weight": 0.0, "target_unit": "span",
               "no_answer": False, "length_bias": True, "bilinear_form": "full", "bilinear_rank": 64, "bilinear_pos": "none",
               "window_layout": "left", "continue_from": None}
 # Config keys renamed after some runs were trained: old name -> current name.
 RENAMED_KEYS = {"f1_target": "loss_utility"}
+# Config keys replaced by a reparametrized one: old name -> (current name, old value -> current value).
+# ℒ_soft + β · ℒ_risk is (1 + β) times the risk_share β/(1 + β) mix (spec §4.3).
+CONVERTED_KEYS = {"risk_weight": ("risk_share", lambda beta: beta / (1 + beta))}
 
 
 def run_config(run_id: str) -> dict:
-    """A trained run's resolved config, with ADDED_KEYS filled in where the run predates them and
-    RENAMED_KEYS under their current names."""
+    """A trained run's resolved config, with ADDED_KEYS filled in where the run predates them,
+    RENAMED_KEYS under their current names and CONVERTED_KEYS converted."""
     import yaml
 
     with open(RESULTS / run_id / "config.yaml", encoding="utf-8") as f:
-        cfg = {RENAMED_KEYS.get(k, k): v for k, v in yaml.safe_load(f).items()}
+        cfg = {}
+        for k, v in yaml.safe_load(f).items():
+            if k in CONVERTED_KEYS:
+                k, convert = CONVERTED_KEYS[k]
+                v = convert(v)
+            cfg[RENAMED_KEYS.get(k, k)] = v
     return {**ADDED_KEYS, **cfg}
 
 
