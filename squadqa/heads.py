@@ -51,6 +51,8 @@ content_ignore_words gold group. At 1, only the configured group is used; at 0, 
 article-only group is used. Both share the same span softmax and annotated passage position.
 """
 
+import math
+
 import torch
 import torch.nn as nn
 
@@ -488,6 +490,19 @@ def risk_loss(out: dict, batch: dict, n_examples: int, em_weight: float, counted
 
 def check_head_config(cfg: dict) -> None:
     """Raise on a head setting that is not built or does not apply (spec rule 7: nothing ignored)."""
+    weights = cfg.get("loss_weights")
+    if weights is not None:
+        if cfg["span_head"] != "joint":
+            raise ValueError("direct loss_weights require the joint head")
+        if not isinstance(weights, dict) or set(weights) != {"group", "f1_soft", "risk"}:
+            raise ValueError("loss_weights must contain exactly group, f1_soft and risk")
+        if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0
+               for v in weights.values()) or not math.isclose(sum(weights.values()), 1.0, abs_tol=1e-8):
+            raise ValueError("loss_weights must be finite, nonnegative and sum to one")
+        if cfg["target_unit"] != "group":
+            raise ValueError("direct loss_weights use target_unit group")
+        if cfg.get("normalize_loss_weights", False) or cfg["f1_target_weight"] or cfg["risk_weight"]:
+            raise ValueError("direct loss_weights cannot be combined with alpha, beta or normalize_loss_weights")
     if cfg.get("normalize_loss_weights", False) and cfg["span_head"] != "joint":
         raise ValueError("normalize_loss_weights is supported only for the joint head")
     if cfg["span_head"] not in HEADS:
@@ -507,9 +522,10 @@ def check_head_config(cfg: dict) -> None:
         raise ValueError("content_ignore_words must be a list of nonempty lowercase strings")
     if not {"a", "an", "the"}.issubset(ignored) or len(ignored) != len(set(ignored)):
         raise ValueError("content_ignore_words must include a/an/the exactly once and have no duplicates")
-    if cfg["risk_em_weight"] < 0 or (cfg["risk_em_weight"] and not cfg["risk_weight"]):
+    risk_active = weights["risk"] > 0 if weights is not None else cfg["risk_weight"] > 0
+    if cfg["risk_em_weight"] < 0 or (cfg["risk_em_weight"] and not risk_active):
         raise ValueError("risk_em_weight is the EM weight inside the risk loss: it must be >= 0, "
-                         "and above 0 only with risk_weight > 0")
+                         "and above 0 only with an active risk term")
     alpha, tau, floor, beta = (cfg["f1_target_weight"], cfg["f1_target_temperature"], cfg["f1_target_floor"],
                                cfg["risk_weight"])
     if not (0 <= alpha <= 1 and tau > 0 and 0 <= floor <= 1 and beta >= 0):
@@ -543,6 +559,7 @@ class Reader(nn.Module):
         self.target_unit = cfg["target_unit"]
         self.expanded_group_weight = cfg.get("expanded_group_weight", 1.0)
         self.normalize_loss_weights = cfg.get("normalize_loss_weights", False)
+        self.loss_weights = cfg.get("loss_weights")
         self.alpha, self.tau, self.floor = cfg["f1_target_weight"], cfg["f1_target_temperature"], cfg["f1_target_floor"]
         self.beta, self.risk_em_weight, self.loss_utility = cfg["risk_weight"], cfg["risk_em_weight"], cfg["loss_utility"]
         self.stats: dict[str, float] = {}               # the last batch's training checks, for the log
@@ -572,6 +589,23 @@ class Reader(nn.Module):
             return independent_nll(out, batch, n_examples)
         if self.kind == "conditional":
             return self.head.loss(out, batch, n_examples)
+        if self.loss_weights is not None:
+            weights = self.loss_weights
+            counted = batch["content"] if self.loss_utility == "normalized" else batch["word_mask"]
+            joint = out["span"].new_zeros(n_examples, dtype=torch.float32)
+            # Skip zero-weight terms, including group NLL in a pure-risk run.
+            if weights["group"]:
+                joint = joint + weights["group"] * interpolated_group_nll(
+                    out, batch, n_examples, self.expanded_group_weight)
+            if weights["f1_soft"]:
+                soft, expected_f1 = f1_target_nll(out, batch, n_examples, self.tau, self.floor,
+                                                self.target_unit, counted)
+                joint = joint + weights["f1_soft"] * soft
+                self.stats["t_f1_expected_f1"] = float(expected_f1.mean())
+            if weights["risk"]:
+                joint = joint + weights["risk"] * risk_loss(
+                    out, batch, n_examples, self.risk_em_weight, counted)
+            return joint
         joint = (interpolated_group_nll(out, batch, n_examples, self.expanded_group_weight)
                  if self.target_unit == "group" else joint_nll(out, batch, n_examples))
         if self.alpha or self.beta:                     # spec §4.3: ℒ = ℒ_soft + β · ℒ_risk on the joint term

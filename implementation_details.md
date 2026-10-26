@@ -54,6 +54,7 @@ f1_target_floor: 0.5                   # φ: spans with F1 < φ get no F1 credit
 target_unit: span                      # span = targets per span (t_EM on the annotated span) | group = per group of boundary variants, so both parts count the gold answer once (§4.3; needs loss_utility normalized and a joint or compound head, so the default stays span for row 0); ladder row 1 sets group in its config
 risk_weight: 0.0                       # β: weight of the expected-F1 (risk) loss added to the target loss (§4.3); 0 = none
 normalize_loss_weights: false           # joint only: optional experiment dividing the loss by 1+β
+loss_weights: null                      # optional direct joint-head {group, f1_soft, risk} mixture; sum must be one
 risk_em_weight: 0.0                    # γ_r: weight of the EM loss inside the risk term, ℒ_risk = Σ p · (ℓ_F1 + γ_r · ℓ_EM) (§4.3); 0 = F1 only. Separate from the decoding γ
 calibration: temperature               # one T, fit on validation split
 extra_train_data: []                   # row 5: [adversarialqa]; augmentation (P2) adds augmented
@@ -252,6 +253,11 @@ target_unit group:  ℒ_soft = (1 − α) · (− log p(G*)) + α · (− Σ_G t
 Experimental `normalize_loss_weights: true` on the joint head divides this objective by `1 + β`.
 The group, F1 soft-target and risk coefficients become `(1-α)/(1+β)`, `α/(1+β)`, and `β/(1+β)`.
 They sum to one. With α = β = 1/3 they are 0.50, 0.25 and 0.25. Defaults and old runs retain the additive objective.
+
+The experimental `loss_weights` mapping specifies the three coefficients directly, including
+`{group: 0, f1_soft: 0, risk: 1}` for pure risk. It requires the joint head and group targets.
+All weights must be finite, nonnegative and sum to one; legacy α, β and normalization must be off.
+Zero-weight loss terms are not evaluated. The risk term retains `risk_em_weight` internally.
 - **One objective for every training variant** (plan §6.2):
 
   | | β = 0 | β > 0 |

@@ -1,0 +1,21 @@
+# Ordinary cross-entropy versus risk. Every sweep trial has f1_soft=0.
+# "group" is the original Row 1 article-only gold-group cross entropy.
+span_head: joint
+bilinear_form: full
+bilinear_pos: none
+length_bias: false
+no_answer: false
+target_unit: group
+content_ignore_words: [a, an, the]
+f1_target_weight: 0.0
+f1_target_temperature: 0.3
+f1_target_floor: 0.0
+risk_weight: 0.0
+risk_em_weight: 0.0
+normalize_loss_weights: false
+loss_weights:
+  group: 1.0
+  f1_soft: 0.0
+  risk: 0.0
+train:
+  epochs: 2
