@@ -208,6 +208,28 @@ def test_summary_of_inference_lists():
     assert s["top1"] == pytest.approx({"correct": 1 / 3, "partial": 1 / 3, "disjoint": 1 / 3})
 
 
+
+def test_summary_keeps_recall_at_5_when_one_list_is_shorter():
+    """A passage with only 3 valid spans used to drop recall@4 and @5 for every question."""
+    full = _list([-0.1, -1, -2, -3, -4], [0, 0, 0, 0, 1], [0, 0, 0, 0, 1], 4)    # gold fifth
+    short = _list([-0.1, -2, -3], [1, 0, 0], [1, 0, 0], 0)
+    s = C.summary([full, short], "validation")
+    assert s["recall@1"] == 0.5 and s["recall@4"] == 0.5 and s["recall@5"] == 1.0
+
+
+def test_summary_refuses_empty_input():
+    with pytest.raises(ValueError):
+        C.summary([], "validation")
+    with pytest.raises(ValueError, match="word-aligned"):
+        C.summary([_list([-0.1], [np.nan], [np.nan], None, False)], "validation")
+
+
+def test_main_refuses_a_reader_trained_on_extra_data(monkeypatch):
+    from squadqa import predict as P
+    monkeypatch.setattr(P, "load_reader", lambda r, device: ({"extra_train_data": ["adversarialqa"]}, None, None, 0))
+    with pytest.raises(NotImplementedError, match="extra_train_data"):
+        C.main(["--run-id", "x", "--split", "train"])
+
 def test_recall_em_counts_a_boundary_variant_and_recall_does_not():
     """A reader trained per group often ranks "the X" above the annotated "X": a hit for recall_em
     (EM 1 under normalized) but not for recall (the annotated span by position)."""
@@ -274,6 +296,7 @@ def test_main_writes_the_lists_and_summary(split, tmp_path, monkeypatch):
     first = next(iter(lists.values()))
     assert set(first) == {"spans", "logp", "f1", "em", "gold", "sampled_gold", "sampled_em"}
     assert ("recall_em@5" in summary) == (split == "validation") and ("sampled_em" in summary) == (split == "train")
+    assert set(summary) >= {"git_commit", "git_dirty", "slurm_job_id"}
 
 
 # The real data path (tokenizer, windows, one softmax per question) with a random scorer.

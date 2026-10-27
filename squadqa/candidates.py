@@ -144,6 +144,8 @@ def summary(lists: list[CandidateList], split: str) -> dict:
     inference: top-k recall for each k up to the list size (the verifier's ceiling, spec §5.1),
     and what the reader's top-1 is: correct (EM 1), partial (F1 > 0) or disjoint (F1 0).
     """
+    if not lists:
+        raise ValueError(f"no {split} lists to summarize")
     sizes = np.array([len(c.starts) for c in lists])
     out = {"questions": len(lists), "mean_size": float(sizes.mean()), "max_size": int(sizes.max())}
     if split == "train":
@@ -151,6 +153,8 @@ def summary(lists: list[CandidateList], split: str) -> dict:
         out["sampled_em"] = float(np.mean([c.sampled_em for c in lists]))
         return out
     scored = [c for c in lists if not np.isnan(c.f1).all()]       # questions with a word-aligned gold, of any length
+    if not scored:
+        raise ValueError(f"no {split} question has a word-aligned gold, so recall is undefined")
     out["with_gold"] = len(scored)
     ranks = [int((c.logp > c.logp[c.gold]).sum()) if c.gold is not None else None for c in scored]
     # Two definitions of "found" (both over the questions with a word-aligned gold):
@@ -160,7 +164,10 @@ def summary(lists: list[CandidateList], split: str) -> dict:
     # the official scorer instead, which also accepts the same text elsewhere (rule 4 doesn't).
     first_em = [int(np.flatnonzero(c.em[np.argsort(-c.logp, kind="stable")] == 1)[0])
                 if (c.em == 1).any() else None for c in scored]
-    for k in range(1, int(sizes.min()) + 1):
+    # Ties: recall@k ranks by strictly higher logp, so a gold tied with another span counts as the
+    # better one; recall_em@k takes the stable sort, which puts tied spans in list (position) order.
+    # Exact float ties are rare in real scores, but the two recalls can differ on them.
+    for k in range(1, int(sizes.max()) + 1):           # a shorter list counts as a miss at the ranks it lacks
         out[f"recall@{k}"] = float(np.mean([r is not None and r < k for r in ranks]))
         out[f"recall_em@{k}"] = float(np.mean([r is not None and r < k for r in first_em]))
     top = [int(np.argmax(c.logp)) for c in scored]
@@ -196,7 +203,7 @@ def main(argv: list[str] | None = None) -> None:
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     import torch
 
-    from squadqa.config import RESULTS, env, load_config, write_json
+    from squadqa.config import RESULTS, env, git_state, load_config, write_json
     from squadqa.data import featurize, load_split
     from squadqa.predict import load_reader, reader_score_fn, score_questions
 
@@ -216,6 +223,11 @@ def main(argv: list[str] | None = None) -> None:
     list_cfg = {"verifier": current["verifier"], "loss_utility": current["loss_utility"]}
     device = "cuda" if torch.cuda.is_available() else "cpu"
     cfg, tok, model, step = load_reader(args.run_id, device)
+    if cfg.get("extra_train_data"):
+        # A reader trained on extra data (row 5: AdversarialQA) needs training lists over those
+        # questions too, and row 5 needs the unanswerable_negatives lists. Nothing uses such a
+        # reader yet, so this waits for row 5 instead of writing lists that skip half its data.
+        raise NotImplementedError(f"lists for a reader trained with extra_train_data {cfg['extra_train_data']} are not built")
     temperature = json.loads((RESULTS / args.run_id / "calibration.json").read_text(encoding="utf-8"))["temperature"]
     questions = load_split(args.split)
     score_fn = reader_score_fn(model, device)
@@ -231,7 +243,9 @@ def main(argv: list[str] | None = None) -> None:
     out_dir = Path(env("SQUADQA_SCRATCH")) / "candidates" / args.run_id
     out_dir.mkdir(parents=True, exist_ok=True)
     write_json(out_dir / f"candidates_{args.split}.json", {q: c.to_json() for q, c in lists.items()})
+    commit, dirty = git_state()
     info = {"run_id": args.run_id, "checkpoint_step": step, "split": args.split, "seed": args.seed,
+            "git_commit": commit, "git_dirty": dirty, "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
             "temperature": temperature, "skipped": skipped, **list_cfg, **summary(list(lists.values()), args.split)}
     write_json(out_dir / f"summary_{args.split}.json", info)
     print(json.dumps(info), flush=True)
