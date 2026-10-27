@@ -240,9 +240,9 @@ def main(argv: list[str] | None = None) -> None:
         skipped += len(feats.skipped)
         print(f"{min(c + args.chunk, len(questions))}/{len(questions)} questions", flush=True)
 
-    out_dir = Path(env("SQUADQA_SCRATCH")) / "candidates" / args.run_id
-    out_dir.mkdir(parents=True, exist_ok=True)
-    write_json(out_dir / f"candidates_{args.split}.json", {q: c.to_json() for q, c in lists.items()})
+    out_dir = Path(env("SQUADQA_SCRATCH")) / "candidates" / args.run_id      # write_json creates it
+    write_json(out_dir / f"candidates_{args.split}.json", {q: c.to_json() for q, c in lists.items()},
+               compact=args.split == "train")                                # ~830k candidates
     commit, dirty = git_state()
     info = {"run_id": args.run_id, "checkpoint_step": step, "split": args.split, "seed": args.seed,
             "git_commit": commit, "git_dirty": dirty, "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
