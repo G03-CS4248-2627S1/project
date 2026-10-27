@@ -48,7 +48,7 @@ verifier:
   lora: {rank: 16, alpha: 32, targets: [query_proj, key_proj, value_proj]}   # shared_lora and option B; check module names in the installed HF version
   k_infer: 5
   k_train: 8                           # spans sampled per training question, before the gold and its boundary variants are added (squadqa.candidates; #66): lists of 10.4 on average
-  sample_temperature: 2.0              # divides the reader's raw span scores when sampling training candidates, above 1 so the lists hold more than the reader's favourites; one value, checked on validation (#66, 24 Oct): before the gold is added, the samples hold an EM-1 span 93.9% of the time, as the validation top-5 does (94.0%), so the sampled distractors are about as hard as the reader's real mistakes; other values not tried
+  sample_temperature: 2.0              # divides the reader's raw span scores when sampling training candidates, above 1 so the lists hold more than the reader's favourites; one value, checked on validation (#66, 24 Oct): before the gold is added, the samples hold an EM-1 span 93.9% of the time, as the validation top-5 does (93.9%), so the sampled distractors are about as hard as the reader's real mistakes; other values not tried
   k_sweep: [5, 10, 20, 30]             # levitated variants only (P3)
   train_candidates: sampled            # sampled = drawn from the final reader's own span distribution (plan §4.3) | crossfit (E2 ablation)
   crossfit_folds: 3                    # crossfit ablation only, on base
