@@ -117,24 +117,18 @@ def inference_list(spans: SpanScores, k: int, flags: np.ndarray, temperature: fl
     return _build(spans, top, top, gold, flags, temperature)
 
 
-def targets(f1: np.ndarray, em: np.ndarray, gold: int, alpha: float, tau: float, floor: float,
-            unit: str = "span") -> np.ndarray:
-    """The listwise target over one list, in the form of spec §4.3: t = (1 − α) t_EM + α t_F1.
+def targets(f1: np.ndarray, gold: int, alpha: float, tau: float, floor: float) -> np.ndarray:
+    """The listwise target over one list, spec §4.3's per-span form: t = (1 − α) t_EM + α t_F1.
 
-    t_EM: all mass on the annotated span (unit "span"), or spread evenly over the candidates with
-    EM = 1, the gold's boundary variants under loss_utility normalized (unit "group").
-    t_F1 ∝ exp(−(1 − F1) / τ) over candidates with F1 > 0 and F1 ≥ φ; under "group" the EM = 1
-    candidates share one weight, so the gold answer counts once. α = 0 is the one-hot target.
+    t_EM puts all mass on the annotated span; t_F1 ∝ exp(−(1 − F1) / τ) over candidates with F1 > 0
+    and F1 ≥ φ. α = 0 is the one-hot target. There is no group form here: §4.3's group objective,
+    −log p(G*) with p(G*) summed over the gold's boundary variants, is not a per-candidate target
+    vector, so it belongs in the verifier's loss (#67), as in heads.f1_target_nll(unit="group").
     """
-    if unit not in ("span", "group"):
-        raise ValueError(f"unknown target unit {unit!r}; choose span or group")
     if not (0 <= alpha <= 1 and tau > 0 and 0 <= floor <= 1):
         raise ValueError("need 0 <= alpha <= 1, tau > 0 and 0 <= floor <= 1")
-    exact = (np.asarray(em) == 1) if unit == "group" else (np.arange(len(f1)) == gold)
-    t_em = exact / exact.sum()
+    t_em = (np.arange(len(f1)) == gold).astype(np.float64)
     w = np.where((f1 > 0) & (f1 >= floor), np.exp(-(1 - f1) / tau), 0.0)
-    if unit == "group":
-        w = np.where(exact, w[gold] / exact.sum(), w)
     return (1 - alpha) * t_em + alpha * w / w.sum()
 
 

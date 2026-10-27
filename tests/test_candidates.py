@@ -157,35 +157,35 @@ def test_build_lists_does_not_depend_on_the_batch():
 # Targets.
 
 LIST_F1 = np.array([1.0, 1.0, 0.8, 0.4, 0.0])        # gold, a boundary variant, two partials, a miss
-LIST_EM = np.array([1, 1, 0, 0, 0])
 
 
 @pytest.mark.parametrize("alpha", [0.0, 0.3, 1.0])
-@pytest.mark.parametrize("unit", ["span", "group"])
 @pytest.mark.parametrize("floor", [0.0, 0.5])
-def test_targets_sum_to_one(alpha, unit, floor):
-    t = C.targets(LIST_F1, LIST_EM, 0, alpha, 0.1, floor, unit)
+def test_targets_sum_to_one(alpha, floor):
+    t = C.targets(LIST_F1, 0, alpha, 0.1, floor)
     assert t.sum() == pytest.approx(1.0) and (t >= 0).all()
 
 
 def test_one_hot_targets():
-    assert C.targets(LIST_F1, LIST_EM, 0, 0.0, 0.1, 0.5, "span").tolist() == [1, 0, 0, 0, 0]
-    assert C.targets(LIST_F1, LIST_EM, 0, 0.0, 0.1, 0.5, "group").tolist() == [0.5, 0.5, 0, 0, 0]
+    assert C.targets(LIST_F1, 0, 0.0, 0.1, 0.5).tolist() == [1, 0, 0, 0, 0]
 
 
-def test_f1_targets_follow_the_floor_and_count_the_gold_group_once():
-    t = C.targets(LIST_F1, LIST_EM, 0, 1.0, 0.1, 0.5, "span")
+def test_f1_targets_follow_the_floor_and_the_temperature():
+    t = C.targets(LIST_F1, 0, 1.0, 0.1, 0.5)
     assert t[3] == 0 and t[4] == 0 and t[0] == t[1] > t[2] > 0
-    g = C.targets(LIST_F1, LIST_EM, 0, 1.0, 0.1, 0.5, "group")
-    # the group shares one weight: w(1) / 2 each, against w(0.8) = exp(-2) for the partial
-    assert g[0] == g[1] and g[0] / g[2] == pytest.approx(0.5 / np.exp(-2.0))
+    assert t[0] / t[2] == pytest.approx(1 / np.exp(-2.0))          # w(1) = 1 against w(0.8) = exp(-0.2 / 0.1)
+
+
+def test_targets_blend_one_hot_and_f1():
+    soft = C.targets(LIST_F1, 0, 1.0, 0.1, 0.5)
+    assert C.targets(LIST_F1, 0, 0.3, 0.1, 0.5) == pytest.approx(0.7 * np.eye(5)[0] + 0.3 * soft)
 
 
 def test_targets_reject_bad_settings():
     with pytest.raises(ValueError):
-        C.targets(LIST_F1, LIST_EM, 0, 1.5, 0.1, 0.5)
+        C.targets(LIST_F1, 0, 1.5, 0.1, 0.5)
     with pytest.raises(ValueError):
-        C.targets(LIST_F1, LIST_EM, 0, 0.5, 0.1, 0.5, "word")
+        C.targets(LIST_F1, 0, 0.5, 0.0, 0.5)
 
 
 # Summary.
