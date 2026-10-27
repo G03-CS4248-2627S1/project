@@ -30,6 +30,7 @@ TRAIN = Path("qa/train-v1.1.json")
 DEV = Path("qa/dev-v1.1.json")
 SKIPPED_IDS = Path("data/splits/skipped_train_ids.txt")
 EXTRA_TRAIN = {"adversarialqa": Path("data/external/adversarialqa/train.json")}
+UNANSWERABLE = Path("data/external/squad2/train-v2.0.json")
 
 
 # Loading (spec §3.1, §3.6).
@@ -43,12 +44,13 @@ class Question:
     answers: tuple[tuple[str, int], ...]        # (text, answer_start) as annotated, in file order
 
 
-def load_squad(path: str | Path) -> list[Question]:
-    """Every question in a SQuAD-format file, in file order."""
+def load_squad(path: str | Path, answers: str = "answers") -> list[Question]:
+    """Every question in a SQuAD-format file, in file order. answers names the field read into
+    Question.answers ("plausible_answers" for SQuAD 2.0's unanswerable questions)."""
     with open(path, encoding="utf-8") as f:
         data = json.load(f)["data"]
     return [Question(qa["id"], article["title"], p["context"], qa["question"],
-                     tuple((a["text"], a["answer_start"]) for a in qa["answers"]))
+                     tuple((a["text"], a["answer_start"]) for a in qa.get(answers, [])))
             for article in data for p in article["paragraphs"] for qa in p["qas"]]
 
 
@@ -79,13 +81,30 @@ def load_split(name: str, extra: list[str] | tuple[str, ...] = ()) -> list[Quest
         raise KeyError(f"unknown split {name!r}; choose train or validation")
     questions = drop_validation(load_squad(TRAIN))
     for key in extra:
-        if key not in EXTRA_TRAIN:
-            raise KeyError(f"unknown extra_train_data {key!r}; choose from {sorted(EXTRA_TRAIN)}")
-        if not EXTRA_TRAIN[key].exists():
-            raise FileNotFoundError(f"{EXTRA_TRAIN[key]} is missing; run python -m squadqa.download_external")
-        added = drop_validation(load_squad(EXTRA_TRAIN[key]))
-        check_no_dev_passages(added)
-        questions += added
+        questions += load_extra(key)
+    return questions
+
+
+def load_extra(key: str) -> list[Question]:
+    """One extra training set (spec §3.6), without the validation articles; raises on a dev passage."""
+    if key not in EXTRA_TRAIN:
+        raise KeyError(f"unknown extra_train_data {key!r}; choose from {sorted(EXTRA_TRAIN)}")
+    return _external(EXTRA_TRAIN[key])
+
+
+def load_unanswerable() -> list[Question]:
+    """SQuAD 2.0's unanswerable training questions (spec §3.6), filtered as load_extra. Their
+    answers are the plausible answers: distractors, never correct answers."""
+    if any(q.answers for q in _external(UNANSWERABLE)):
+        raise ValueError(f"{UNANSWERABLE} holds answerable questions; rebuild it with squadqa.download_external")
+    return _external(UNANSWERABLE, answers="plausible_answers")
+
+
+def _external(path: Path, answers: str = "answers") -> list[Question]:
+    if not path.exists():
+        raise FileNotFoundError(f"{path} is missing; run python -m squadqa.download_external")
+    questions = drop_validation(load_squad(path, answers))
+    check_no_dev_passages(questions)
     return questions
 
 

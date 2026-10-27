@@ -51,6 +51,27 @@ def span_f1_em(flags: np.ndarray, a_start, a_end, b_start, b_end) -> tuple[np.nd
     word matches only the identical span (F1 = EM = 1) and nothing else: the scorer would call
     any two such spans equal, but they sit at different positions (spec rule 4).
     """
+    la, lb, overlap, both_empty = _overlap(flags, a_start, a_end, b_start, b_end)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        f1 = np.where(la + lb > 0, 2.0 * overlap / (la + lb), 0.0)
+    f1 = np.where(both_empty, 1.0, f1)
+    em = np.where(both_empty, 1.0, ((overlap == la) & (overlap == lb) & (la > 0)).astype(float))
+    return f1, em
+
+
+def span_precision_recall(flags: np.ndarray, a_start, a_end, b_start, b_end) -> tuple[np.ndarray, np.ndarray]:
+    """The two halves of span_f1_em's F1 for a candidate a against a reference b: counted words
+    shared, over a's (precision; low = too long) and over b's (recall; low = too short). A span
+    with no counted word scores 0 on its side, except against the identical span (1 and 1)."""
+    la, lb, overlap, both_empty = _overlap(flags, a_start, a_end, b_start, b_end)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        precision = np.where(la > 0, overlap / la, 0.0)
+        recall = np.where(lb > 0, overlap / lb, 0.0)
+    return np.where(both_empty, 1.0, precision), np.where(both_empty, 1.0, recall)
+
+
+def _overlap(flags, a_start, a_end, b_start, b_end):
+    """Counted words in a, in b and in both, and whether a and b are the same span with none."""
     prefix = np.concatenate([[0], np.cumsum(flags, dtype=np.int64)])
     a_start, a_end, b_start, b_end = (np.asarray(x) for x in (a_start, a_end, b_start, b_end))
     la = prefix[a_end + 1] - prefix[a_start]
@@ -58,11 +79,7 @@ def span_f1_em(flags: np.ndarray, a_start, a_end, b_start, b_end) -> tuple[np.nd
     lo, hi = np.maximum(a_start, b_start), np.minimum(a_end, b_end)
     overlap = np.where(lo <= hi, prefix[np.maximum(hi, lo - 1) + 1] - prefix[lo], 0)
     both_empty = (la == 0) & (lb == 0) & (a_start == b_start) & (a_end == b_end)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        f1 = np.where(la + lb > 0, 2.0 * overlap / (la + lb), 0.0)
-    f1 = np.where(both_empty, 1.0, f1)
-    em = np.where(both_empty, 1.0, ((overlap == la) & (overlap == lb) & (la > 0)).astype(float))
-    return f1, em
+    return la, lb, overlap, both_empty
 
 
 def group_keys(flags: np.ndarray, starts: np.ndarray, ends: np.ndarray) -> list[tuple[int, ...]]:
@@ -76,6 +93,19 @@ def group_keys(flags: np.ndarray, starts: np.ndarray, ends: np.ndarray) -> list[
         f, l = int(next_c[i]), int(prev_c[j])
         out.append((f, l) if f <= l else (-1, i, j))
     return out
+
+
+def group_cores(flags: np.ndarray, starts, ends) -> tuple[np.ndarray, np.ndarray]:
+    """Each span's content core, its first and last content word: the grouping of group_keys,
+    vectorized, so two spans share a group exactly when their cores are equal. A span with no
+    content word is its own core (it can't equal a content core, whose ends are content words)."""
+    idx = np.arange(len(flags))
+    next_c = np.minimum.accumulate(np.where(flags, idx, len(flags))[::-1])[::-1]
+    prev_c = np.maximum.accumulate(np.where(flags, idx, -1))
+    starts, ends = np.asarray(starts), np.asarray(ends)
+    f, l = next_c[starts], prev_c[ends]
+    has = f <= l
+    return np.where(has, f, starts), np.where(has, l, ends)
 
 
 # One softmax per question (spec §3.4).
