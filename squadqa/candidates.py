@@ -86,13 +86,13 @@ def _build(spans: SpanScores, picked: np.ndarray, sampled: np.ndarray, gold: tup
     keep = np.unique(picked)
     keep = keep[np.lexsort((spans.ends[keep], spans.starts[keep]))]        # by position, so the order is fixed
     starts, ends = spans.starts[keep], spans.ends[keep]
-    g = spans.index(gold)
-    if gold is None or g is None:
-        f1 = em = np.full(len(keep), np.nan)
+    g = None if gold is None else spans.index(gold)      # None too for a gold over max_answer_words
+    if gold is None:                                     # labels need only the gold's words, at any length
+        f1, em = np.full(len(keep), np.nan), np.full(len(keep), np.nan)
     else:
         f1, em = span_f1_em(flags, starts, ends, gold[0], gold[1])
     pos = None if g is None else np.flatnonzero(keep == g)
-    hit_em = g is not None and bool((span_f1_em(flags, spans.starts[sampled], spans.ends[sampled], gold[0], gold[1])[1] == 1).any())
+    hit_em = gold is not None and bool((span_f1_em(flags, spans.starts[sampled], spans.ends[sampled], gold[0], gold[1])[1] == 1).any())
     return CandidateList(starts, ends, span_logp(spans, temperature)[0][keep], f1, em,
                          None if pos is None or not len(pos) else int(pos[0]),
                          g is not None and bool(np.isin(g, sampled)), hit_em)
@@ -155,7 +155,7 @@ def summary(lists: list[CandidateList], split: str) -> dict:
         out["sampled_gold"] = float(np.mean([c.sampled_gold for c in lists]))
         out["sampled_em"] = float(np.mean([c.sampled_em for c in lists]))
         return out
-    scored = [c for c in lists if not np.isnan(c.f1).all()]       # questions with a word-aligned gold
+    scored = [c for c in lists if not np.isnan(c.f1).all()]       # questions with a word-aligned gold, of any length
     out["with_gold"] = len(scored)
     ranks = [int((c.logp > c.logp[c.gold]).sum()) if c.gold is not None else None for c in scored]
     # Two definitions of "found" (both over the questions with a word-aligned gold):

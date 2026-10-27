@@ -323,3 +323,15 @@ def test_build_lists_refuses_list_options_that_are_not_built(key, value):
            "loss_utility": "normalized"}
     with pytest.raises(NotImplementedError, match=key):
         C.build_lists([], [], "train", cfg, 1.0, 0)
+
+
+def test_a_gold_longer_than_any_candidate_still_labels_the_list():
+    """A word-aligned gold over max_answer_words is never a candidate, but F1 / EM need only its words."""
+    s, gold = all_spans(40), (2, 37)                     # 36 words, candidates at most 30
+    assert s.index(gold) is None
+    c = C.inference_list(s, 5, np.ones(40, bool), 1.0, gold)
+    overlap = np.maximum(0, np.minimum(c.ends, 37) - np.maximum(c.starts, 2) + 1)
+    assert c.f1 == pytest.approx(2 * overlap / (c.ends - c.starts + 1 + 36))
+    assert c.gold is None and not c.sampled_gold and (c.em == 0).all()
+    summ = C.summary([c], "validation")
+    assert summ["with_gold"] == 1 and summ["recall@1"] == summ["recall_em@1"] == 0
