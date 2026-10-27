@@ -298,13 +298,13 @@ def test_main_writes_the_lists_and_summary(split, source, unit, tmp_path, monkey
         real_unanswerable = D.load_unanswerable
         monkeypatch.setattr(D, "load_unanswerable", lambda: real_unanswerable()[:40])
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-    monkeypatch.setenv("SQUADQA_SCRATCH", str(tmp_path / "scratch"))     # its candidates/ folder doesn't exist yet
+    monkeypatch.setattr(C, "VERIFIER_DATA", tmp_path / "data" / "verifier")     # doesn't exist yet
 
     C.main(["--run-id", run_id, "--split", split, "--source", source, "--set", f"verifier.list_unit={unit}",
             "--chunk", "16", "--batch-size", "8"])
 
     name = split if source == "squad" else f"{source}_{split}"
-    out = tmp_path / "scratch" / "candidates" / run_id
+    out = tmp_path / "data" / "verifier" / run_id
     lists = json.loads((out / f"candidates_{name}.json").read_text())
     summary = json.loads((out / f"summary_{name}.json").read_text())
     assert summary["questions"] == len(lists) > 30 and summary["checkpoint_step"] == 123

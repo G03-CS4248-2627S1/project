@@ -35,9 +35,9 @@ log-probability at the run's calibrated temperature. Each list also records the 
     python -m squadqa.candidates --run-id <reader run> --split train --source squad2-unanswerable \
         --set verifier.list_unit=group
 
-The lists go to $SQUADQA_SCRATCH/candidates/<run_id>/candidates_<split>.json, or
-candidates_<source>_<split>.json for the other sources (large; workflow.md §2.2 keeps them out of
-the repo), with a summary next to them (summary below: top-k recall, how often the sample held the
+The lists go to data/verifier/<run_id>/candidates_<split>.json, or candidates_<source>_<split>.json
+for the other sources, in the clone that runs the job (gitignored: tens of MB each, and rebuilt
+from the reader's checkpoint by this module), with a summary next to them (summary below: top-k recall, how often the sample held the
 gold, list sizes, what the reader's top-1 and the other candidates are).
 """
 from __future__ import annotations
@@ -55,6 +55,7 @@ from squadqa.data import answer_word_span
 from squadqa.decode import (SpanScores, answer_text, content_flags, group_cores, log_softmax, span_f1_em,
                             span_logp, span_precision_recall, top_k)
 
+VERIFIER_DATA = Path("data/verifier")       # gitignored; one folder per reader run
 SPLITS = ("train", "validation")
 SOURCES = ("squad", "adversarialqa", "squad2-unanswerable")
 LIST_UNITS = ("span", "group")
@@ -477,7 +478,7 @@ def main(argv: list[str] | None = None) -> None:
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     import torch
 
-    from squadqa.config import RESULTS, env, git_state, load_config, write_json
+    from squadqa.config import RESULTS, git_state, load_config, write_json
     from squadqa.data import featurize, load_split
     from squadqa.predict import load_reader, reader_score_fn, score_questions
 
@@ -524,7 +525,7 @@ def main(argv: list[str] | None = None) -> None:
         print(f"{min(c + args.chunk, len(questions))}/{len(questions)} questions", flush=True)
 
     name = args.split if args.source == "squad" else f"{args.source}_{args.split}"
-    out_dir = Path(env("SQUADQA_SCRATCH")) / "candidates" / args.run_id      # write_json creates it
+    out_dir = VERIFIER_DATA / args.run_id                                    # write_json creates it
     write_json(out_dir / f"candidates_{name}.json", {q: c.to_json() for q, c in lists.items()},
                compact=args.split == "train")                                # ~830k candidates
     commit, dirty = git_state()
