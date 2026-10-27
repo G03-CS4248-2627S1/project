@@ -31,7 +31,7 @@ from pathlib import Path
 
 import numpy as np
 
-from squadqa.decode import SpanScores, content_flags, log_softmax, span_f1_em, span_logp
+from squadqa.decode import SpanScores, content_flags, log_softmax, span_f1_em, span_logp, top_k
 
 SPLITS = ("train", "validation")
 # Verifier keys that change the lists (spec §5.1) but are not built yet, with the only value allowed.
@@ -113,7 +113,8 @@ def training_list(spans: SpanScores, gold: tuple[int, int], k: int, sample_tempe
 def inference_list(spans: SpanScores, k: int, flags: np.ndarray, temperature: float,
                    gold: tuple[int, int] | None = None) -> CandidateList:
     """The k most probable spans and nothing else; the gold, if given, only fills f1, em and gold."""
-    top = np.argsort(-span_logp(spans, temperature)[0], kind="stable")[:k]
+    best = top_k(spans, k, temperature)                  # the reader's own top-k, so the lists stay in step with it
+    top = np.array([spans.index((int(i), int(j))) for i, j in zip(best.starts, best.ends)], dtype=np.int64)
     return _build(spans, top, top, gold, flags, temperature)
 
 
