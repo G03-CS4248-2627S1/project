@@ -1,0 +1,11 @@
+{
+  "run_id": "2026-10-25-row1-joint-risk-b1.0-s0-j1012186",
+  "experiment": "row1-joint",
+  "config_file": "configs/experiments/row1-joint.yaml",
+  "seed": 0,
+  "git_commit": "b5ac7246868c7767f5ab6fc8d389698b4160a4b8",
+  "git_dirty": false,
+  "slurm_job_id": "1012186",
+  "host": "xgpi0",
+  "started": "2026-10-25T07:11:53"
+}

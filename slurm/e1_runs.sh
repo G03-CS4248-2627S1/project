@@ -25,8 +25,11 @@ for t in 0.1 0.3 1.0; do
     RUNS+=("soft-t$t-f$f|1a-soft|t$t-f$f|--set f1_target_temperature=$t --set f1_target_floor=$f")
   done
 done
-for b in 0.3 1.0 3.0; do
-  RUNS+=("risk-b$b|1a-risk|b$b|--set risk_weight=$b")
+# The runs added beta x the risk loss (old key risk_weight); risk_share = beta / (1 + beta) is the same mix
+# up to the loss scale, so the names and tags keep beta.
+for bs in "0.3 0.23076923076923075" "1.0 0.5" "3.0 0.75"; do
+  read -r b s <<<"$bs"
+  RUNS+=("risk-b$b|1a-risk|b$b|--set risk_share=$s")
 done
 
 field() { cut -d'|' -f"$2" <<<"$1"; }
