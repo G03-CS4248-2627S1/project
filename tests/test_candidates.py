@@ -314,3 +314,12 @@ def test_lists_on_real_questions_with_a_random_reader():
             else:
                 assert len(pairs) == cfg["verifier"]["k_infer"]
         assert C.summary(list(lists.values()), split)["questions"] == len(lists)
+
+
+@pytest.mark.parametrize("key, value", [("train_candidates", "crossfit"), ("sibling_negatives", True),
+                                        ("unanswerable_negatives", True)])
+def test_build_lists_refuses_list_options_that_are_not_built(key, value):
+    cfg = {"verifier": {"k_train": 6, "sample_temperature": 2.0, "k_infer": 5, key: value},
+           "loss_utility": "normalized"}
+    with pytest.raises(NotImplementedError, match=key):
+        C.build_lists([], [], "train", cfg, 1.0, 0)

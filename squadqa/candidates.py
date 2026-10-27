@@ -34,6 +34,8 @@ import numpy as np
 from squadqa.decode import SpanScores, content_flags, log_softmax, span_f1_em, span_logp
 
 SPLITS = ("train", "validation")
+# Verifier keys that change the lists (spec §5.1) but are not built yet, with the only value allowed.
+NOT_BUILT = {"train_candidates": "sampled", "sibling_negatives": False, "unanswerable_negatives": False}
 
 
 @dataclass
@@ -140,9 +142,10 @@ def summary(lists: list[CandidateList], split: str) -> dict:
     """What a split's lists look like.
 
     training: list sizes, and how often the sample held the gold before it was added: the annotated
-    span (sampled_gold) or any EM 1 span (sampled_em). A check on sample_temperature: the verifier
-    should see the answer missing about as often as top-k misses it at inference (compare
-    sampled_em with validation recall_em@k_infer).
+    span (sampled_gold) or any EM 1 span (sampled_em). A check on sample_temperature: every
+    training list gets the gold added, so this is about the sample alone; a sampled_em close to
+    validation recall_em@k_infer means the sampled distractors are about as hard as the reader's
+    top-k at inference.
     inference: top-k recall for each k up to the list size (the verifier's ceiling, spec §5.1),
     and what the reader's top-1 is: correct (EM 1), partial (F1 > 0) or disjoint (F1 0).
     """
@@ -178,6 +181,9 @@ def build_lists(examples, spans: list[SpanScores], split: str, cfg: dict, temper
     """The lists of one batch of examples (squadqa.data.Example) with their SpanScores. cfg needs
     "verifier" (k_train, sample_temperature, k_infer) and "loss_utility"."""
     v = cfg["verifier"]
+    for key, default in NOT_BUILT.items():
+        if v.get(key, default) != default:
+            raise NotImplementedError(f"verifier.{key}: {v[key]!r} is not built; only {default!r}")
     positional = cfg["loss_utility"] == "positional"
     out = {}
     for ex, s in zip(examples, spans):
