@@ -169,11 +169,15 @@ def start_run(cfg: dict, config: str | Path | None, seed: int, run_id: str | Non
     return run_dir
 
 
-def write_json(path: Path, data) -> None:
-    """ASCII JSON with a trailing newline, the layout of qa/*.json. NaN or infinity raises."""
+def write_json(path: Path, data, compact: bool = False) -> None:
+    """ASCII JSON with a trailing newline, the layout of qa/*.json, creating the parent folders.
+    NaN or infinity raises. compact drops the indentation, for large files nobody reads or diffs
+    (the verifier's training lists in scratch, about a third of the size)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     with open(tmp, "w", encoding="ascii", newline="\n") as f:
-        json.dump(data, f, indent=2, allow_nan=False)
+        json.dump(data, f, indent=None if compact else 2, separators=(",", ":") if compact else None,
+                  allow_nan=False)
         f.write("\n")
     tmp.replace(path)
 
