@@ -21,9 +21,9 @@
   verifier.train.checkpoint_every steps and at the end. Re-running with the same run id resumes.
 
 Then, on the validation top-k lists (evaluate; spec §5.1, "Combining"): λ is fit by
-verifier.fit_lambda (the NLL of the gold's EM-1 candidates), then one temperature on the combined
-scores log p_reader + λ · s, and one on the verifier's scores alone, both by the same NLL (plan
-§4.3: "then calibrate and decode"). results/<run_id>/ gets the verifier scores of every candidate,
+verifier.fit_lambda (the NLL of the gold's EM-1 candidates, jointly with a temperature), then one
+temperature on the combined scores log p_reader + λ · s, and one on the verifier's scores alone,
+both by the same NLL (plan §4.3: "then calibrate and decode"). results/<run_id>/ gets the verifier scores of every candidate,
 the predictions of the reader alone (λ = 0), the verifier alone (plan §9.2's ablation) and
 combined, each decoded by the reader's own decode_rules (MAP and MBR, boundary variants grouped,
 decode.decode), and metrics.json with all of them scored by the official scorer, plus λ, the
@@ -238,10 +238,11 @@ def evaluate(examples: list[D.Example], entries: list[dict], scores: list[np.nda
     """The combination's settings and the predictions of the reader alone (λ = 0), the verifier
     alone and combined, under each of the reader's decode_rules (spec §5.1, "Combining").
 
-    λ is fit first (verifier.fit_lambda), at the reader's own calibration; then one temperature on
-    the combined scores log p_reader + λ · s, and one on the verifier's scores s alone, each by the
-    NLL of the gold's EM-1 candidates, as the reader's calibration fits its temperature (spec
-    §4.4). MBR weighs the candidates by these probabilities, so the temperature changes its
+    λ is fit with a temperature (verifier.fit_lambda's joint grid: at T = 1 the sum of two
+    calibrated scores is overconfident and the NLL turns the verifier off); then one temperature on
+    the combined scores log p_reader + λ · s, refined from the grid's, and one on the verifier's
+    scores s alone, each by the NLL of the gold's EM-1 candidates, as the reader's calibration fits
+    its temperature (spec §4.4). MBR weighs the candidates by these probabilities, so the temperature changes its
     answers; MAP's doesn't move. All go through decode.decode on the k candidates, so boundary
     variants are grouped as in the reader's own MAP and MBR; the reader alone over k = 5 can differ
     slightly from its run's predictions, which decode over decode_topk."""
@@ -252,7 +253,7 @@ def evaluate(examples: list[D.Example], entries: list[dict], scores: list[np.nda
         em = np.array([0 if x is None else x for x in e["em"]])
         if (em == 1).any():
             items.append((np.array(e["logp"]), s, np.flatnonzero(em == 1)))
-    lam = V.fit_lambda(items) if items else 0.0         # no list holds its gold: the reader alone, not a crash after training
+    lam = V.fit_lambda(items)[0] if items else 0.0      # no list holds its gold: the reader alone, not a crash after training
     fit = {"lambda": lam, "lambda_questions": len(items)}
     if items:
         combined = [(V.combine(r, s, lam), g) for r, s, g in items]
