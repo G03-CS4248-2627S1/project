@@ -1,5 +1,6 @@
-"""The verifier: in-place candidate markers, shared by both variants (spec §5.3, §5.7 V5), and the
-shared_lora variant (spec §5.4, §5.7 V4), with its listwise loss and the reader + λ·verifier combination.
+"""The verifier: in-place candidate markers, shared by both variants (spec §5.3, §5.7 V5), the
+shared_lora variant (spec §5.4, §5.7 V4) and the separate variant (spec §5.4: ModernBERT, fully
+fine-tuned), with their listwise loss and the reader + λ·verifier combination.
 
 A candidate is a word span (i, j) of a passage, inclusive, as in squadqa.data. The verifier reads
 the question and the passage with the candidate marked in place:
@@ -15,7 +16,12 @@ with the reader's tokenizer, so E2 compares backbones on identical text.
 Resizing the embeddings: DeBERTa-v3's matrix has 128,100 rows but its tokenizer only 128,001
 entries, so after add_markers len(tokenizer) is 128,003, below the matrix. A plain
 model.resize_token_embeddings(len(tokenizer)) would shrink the reader's embeddings; use
-resize_for_markers, which only ever grows them.
+resize_for_markers, which only ever grows them. ModernBERT's matrix and tokenizer both have 50,368
+entries, so the markers (50,368 and 50,369) add two rows.
+
+ModernBERT's byte-level BPE keeps the space before each marker as a token of its own ("Ġin Ġ <a>
+Ġ1889 Ġ </a> Ġby"), where DeBERTa-v3's tokenizer drops it ("▁in <a> ▁1889 </a> ▁by"). Both see
+the same text; the separate verifier learns the pattern in fine-tuning.
 """
 from __future__ import annotations
 
@@ -147,6 +153,21 @@ def collate_marked(encs: list[Encoded], pad_id: int) -> dict:
             "open_pos": torch.tensor([e.open_pos for e in encs]), "close_pos": torch.tensor([e.close_pos for e in encs])}
 
 
+# The head both variants put on their encoder (spec §5.3), so E2 compares backbones, not heads.
+
+def score_head(d: int, cfg: dict) -> nn.Module:
+    """[CLS], OPEN and CLOSE states (3d) → MLP (head_dim, GELU, dropout) → one score."""
+    return nn.Sequential(nn.Linear(3 * d, cfg["head_dim"]), nn.GELU(),
+                         nn.Dropout(cfg["train"]["head_dropout"]), nn.Linear(cfg["head_dim"], 1))
+
+
+def head_scores(head: nn.Module, h: torch.Tensor, batch: dict) -> torch.Tensor:
+    """(B,) fp32 scores from the encoder's last hidden states h (B, T, d) of a collate_marked batch."""
+    rows = torch.arange(h.size(0), device=h.device)
+    feats = torch.cat([h[:, 0], h[rows, batch["open_pos"]], h[rows, batch["close_pos"]]], dim=-1)
+    return head(feats).squeeze(-1).float()
+
+
 # The shared_lora verifier (spec §5.4; #67): the frozen final reader plus LoRA.
 
 @contextlib.contextmanager
@@ -197,9 +218,7 @@ class SharedLoraVerifier(nn.Module):
         self.open_id, self.close_id = open_id, close_id
         self.markers = nn.Parameter(emb.weight.detach().float().mean(0).repeat(2, 1))
         emb.register_forward_hook(self._insert_markers)
-        d = reader.encoder.config.hidden_size
-        self.head = nn.Sequential(nn.Linear(3 * d, cfg["head_dim"]), nn.GELU(),
-                                  nn.Dropout(cfg["train"]["head_dropout"]), nn.Linear(cfg["head_dim"], 1))
+        self.head = score_head(reader.encoder.config.hidden_size, cfg)
 
     def _insert_markers(self, module, inputs, output):
         ids = inputs[0]
@@ -210,14 +229,59 @@ class SharedLoraVerifier(nn.Module):
     def forward(self, batch: dict) -> torch.Tensor:
         """(B,) scores of a collate_marked batch: [CLS], OPEN and CLOSE states → MLP."""
         h = self.reader.encoder(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"]).last_hidden_state
-        rows = torch.arange(h.size(0), device=h.device)
-        feats = torch.cat([h[:, 0], h[rows, batch["open_pos"]], h[rows, batch["close_pos"]]], dim=-1)
-        return self.head(feats).squeeze(-1).float()
+        return head_scores(self.head, h, batch)
 
     def reader_span_scores(self, batch: dict):
         """The reader's span scores (Reader.span_scores) with the adapters off."""
         with adapters(self.reader.encoder, False):
             return self.reader.span_scores(batch)
+
+    def trainable_parameters(self) -> list[nn.Parameter]:
+        return [p for p in self.parameters() if p.requires_grad]
+
+
+# The separate verifier (spec §5.4; #68): an independently pretrained encoder, every weight trained.
+
+ATTENTION = "sdpa"      # PyTorch's attention, named so a flash-attn install can't change the kernels
+
+
+def load_separate_encoder(name: str):
+    """verifier.separate_model at its pin, in fp32 (spec §9), with ATTENTION. A right-padded batch
+    then scores each candidate as it would alone (test_verifier, on a tiny ModernBERT)."""
+    from squadqa.train_reader import load_encoder
+
+    return load_encoder(name, attn_implementation=ATTENTION)
+
+
+class SeparateVerifier(nn.Module):
+    """An encoder of its own (ModernBERT), fully fine-tuned, with the same head as
+    SharedLoraVerifier. It shares no weight with the reader, which only chose each candidate's
+    window (spec §5.3).
+
+    The markers are two rows of the encoder's embedding table, grown by resize_for_markers, and
+    train with the rest of it. They start at the mean of the other rows, as SharedLoraVerifier's
+    markers start at its table's mean.
+    """
+
+    def __init__(self, encoder: nn.Module, open_id: int, close_id: int, cfg: dict):
+        super().__init__()
+        emb = encoder.get_input_embeddings()
+        if max(open_id, close_id) >= emb.num_embeddings:
+            raise ValueError("a marker id is outside the embedding table; grow it with resize_for_markers first")
+        with torch.no_grad():
+            others = torch.ones(emb.num_embeddings, dtype=torch.bool)
+            others[[open_id, close_id]] = False
+            emb.weight[[open_id, close_id]] = emb.weight[others].mean(0)
+        for p in encoder.parameters():
+            p.requires_grad_(True)
+        self.encoder = encoder
+        self.open_id, self.close_id = open_id, close_id
+        self.head = score_head(encoder.config.hidden_size, cfg)
+
+    def forward(self, batch: dict) -> torch.Tensor:
+        """(B,) scores of a collate_marked batch: [CLS], OPEN and CLOSE states → MLP."""
+        h = self.encoder(input_ids=batch["input_ids"], attention_mask=batch["attention_mask"]).last_hidden_state
+        return head_scores(self.head, h, batch)
 
     def trainable_parameters(self) -> list[nn.Parameter]:
         return [p for p in self.parameters() if p.requires_grad]

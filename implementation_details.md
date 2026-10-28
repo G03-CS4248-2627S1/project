@@ -80,7 +80,7 @@ verifier:
   sibling_negatives: false             # P2 ablation (§3.5)
   unanswerable_negatives: false        # row 5: SQuAD 2.0 unanswerable questions with a null candidate (§5.1)
   train:                               # squadqa.train_verifier (#67); provisional, tuned on base (plan §16: lr, LoRA rank, λ)
-    lr: 1.0e-4                         # LoRA, markers and head; the frozen reader has none
+    lr: 1.0e-4                         # shared_lora: LoRA, markers and head (the frozen reader has none); verifier-separate.yaml sets its own
     epochs: 1
     warmup_frac: 0.1
     weight_decay: 0.01
@@ -358,6 +358,7 @@ risk = (logp.exp() * torch.where(valid, span_loss, torch.zeros_like(span_loss)))
 - **Other sources** (training lists only, `squadqa.candidates --source`): AdversarialQA train, which the reader never saw, as for SQuAD; and the unanswerable questions of §3.6, sampled the same way (so their lists are built like the answerable ones) plus the plausible answer when it is a valid span, with no gold.
 - **Labels** on every candidate, against the reference (the gold, or the plausible answer of an unanswerable question), all between content cores so that every member of a group gets the same values: `f1`, `em`, `precision`, `recall` (`loss_utility`); `relation` (`same`, `inside`, `contains`, `crosses`, `disjoint`); `kind` (`correct` = EM 1, `boundary` = F1 > 0, `wrong` = F1 0); `start_shift`, `end_shift` (candidate core minus reference core, in words); `gap` (words between disjoint cores); `official_f1`, `official_em` (the official scorer on the texts: analysis only, never a target, because it accepts the same text elsewhere, rule 4); `sibling` (the core is the gold core of one of the reader's training questions on the same passage: a memorised answer). Each list also records the reader's own top-1 with the same labels.
 - **Loss:** listwise. Softmax over a question's candidate scores; F1-soft target over the candidates (same α, τ, φ form and the same `loss_utility` as §4.3); cross-entropy.
+- **Combining** (plan §4.3; `squadqa.train_verifier.evaluate`): over a question's top-k list, log p_reader + λ · s, with λ from a grid that includes 0 (the reader alone), chosen by the NLL of the gold's EM-1 candidates on validation. Then fit one temperature on the combined scores by the same NLL, as the reader is calibrated (§4.4), and decode with the reader's own rules. MBR weighs candidates by these probabilities, so the temperature changes its answers. The verifier alone (plan §9.2's ablation) is softmax(s / T_v), with T_v fitted the same way. λ and the temperatures are fitted on the split they are scored on, so those scores are slightly optimistic. `--rescore <run_id>` reruns this from a run's saved scores, without a GPU.
 - **Unanswerable negatives** (`unanswerable_negatives: true`, row 5): append a null candidate with a fixed score of 0 to every training question's list. Answerable questions give it target 0; the unanswerable questions of §3.6 put all target mass on it. Inference never adds the null candidate.
 - Track **top-k recall** (fraction of questions whose gold span is among the candidates). It caps verifier accuracy.
   - `squadqa.candidates` reports it two ways: `recall@k`, the annotated span by position, as worded here, and `recall_em@k`, some candidate with EM 1 under `loss_utility`, so boundary variants count. A reader trained with `target_unit: group` often ranks a variant first, so they differ most at k = 1: row 1 seed 0 (`2026-10-23-row1-joint-s0-j998373`, the stage-2 reader) gave 0.669 vs 0.761 @1 and 0.915 vs 0.938 @5 (#66). `squadqa.report`'s top-k recall uses the official scorer, which also accepts the same text elsewhere (0.767 / 0.937).
@@ -382,8 +383,11 @@ Not the default: the default candidates are sampled from the final reader (§5.1
   - Reader passes run with the adapter disabled (`with model.disable_adapter():`); verifier passes run with it enabled. Built as `squadqa.verifier.SharedLoraVerifier`: LoRA is injected into the reader's encoder in place (`peft.inject_adapter_in_model`), so the reader keeps its structure, and `verifier.adapters(encoder, False)` switches it off (off reproduces the reader exactly, `torch.equal`).
   - Train only the LoRA weights, the two marker embeddings and the verifier head. Keep the existing embedding rows frozen, so the reader is unchanged (test V4).
     - The marker embeddings are their own 2-row parameter, written over the word embeddings at the marker ids. Training two rows of the table by masking its gradient would move every row, because AdamW's weight decay ignores a zero gradient (checked 2026-10-23).
-- **`separate`:** `verifier.separate_model` (ModernBERT-large), fully fine-tuned with its own tokenizer.
-  - Pinned in `MODELS` in `squadqa/download_model.py` (base and large); load it with an explicit dtype (§9).
+- **`separate`:** `verifier.separate_model` (ModernBERT-large), fully fine-tuned with its own tokenizer (`configs/experiments/verifier-separate.yaml`). Built as `squadqa.verifier.SeparateVerifier`.
+  - Pinned in `MODELS` in `squadqa/download_model.py` (base and large). `verifier.load_separate_encoder` loads it in fp32 (§9) with PyTorch's attention (`attn_implementation="sdpa"`), so installing flash-attn would change nothing.
+  - The reader's weights are not loaded. Its run's config and tokenizer only choose each candidate's window (§5.3).
+  - The markers are two new rows of ModernBERT's embedding table, which has no spare rows (50,368 rows, 50,368 tokenizer entries). They start at the mean of the other rows and train with the rest. ModernBERT's byte-level BPE keeps the space before each marker as a token of its own (`Ġin Ġ <a> Ġ1889`), where DeBERTa-v3's tokenizer drops it.
+  - The head is `shared_lora`'s (§5.3). Every weight trains, at the config's own learning rate (3e-5, provisional; tuned on base, plan §15.3). Weight decay skips biases and LayerNorm weights found by module type (`train_verifier.no_decay`), because ModernBERT's norms (`attn_norm`, `mlp_norm`, …) don't match the reader's name rule.
   - Smoke-test it like any new training script (§9).
 
 ### 5.5 Levitated markers (P3)

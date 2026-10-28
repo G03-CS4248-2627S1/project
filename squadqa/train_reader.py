@@ -54,23 +54,25 @@ CHECKPOINT = "checkpoint.pt"
 EPOCH_MODEL = "model_epoch{}.pt"
 
 
-def load_encoder(name: str, dtype=torch.float32):
+def load_encoder(name: str, dtype=torch.float32, **kwargs):
     """The pinned pretrained encoder, loaded with an explicit dtype (transformers 5 otherwise
-    keeps the stored one, fp16 for deberta-v3-large)."""
+    keeps the stored one, fp16 for deberta-v3-large); kwargs go to from_pretrained."""
     from transformers import AutoModel
 
     from squadqa.download_model import MODELS
     C.env("HF_HOME")
     if name not in MODELS:
         raise KeyError(f"{name} is not pinned; add it to squadqa/download_model.py first (spec §9)")
-    return AutoModel.from_pretrained(name, revision=MODELS[name]["revision"], dtype=dtype)
+    return AutoModel.from_pretrained(name, revision=MODELS[name]["revision"], dtype=dtype, **kwargs)
 
 
-def build_optimizer(model, cfg: dict, total_steps: int):
+def build_optimizer(model, cfg: dict, total_steps: int, no_decay=None):
+    """AdamW without weight decay on the parameters no_decay(name) picks (by default biases and
+    DeBERTa's LayerNorm weights, by name), and the linear warmup-decay schedule."""
     from transformers import get_linear_schedule_with_warmup
 
     t = cfg["train"]
-    no_decay = lambda n: n.endswith("bias") or "LayerNorm" in n or "layernorm" in n
+    no_decay = no_decay or (lambda n: n.endswith("bias") or "LayerNorm" in n or "layernorm" in n)
     params = [(n, p) for n, p in model.named_parameters() if p.requires_grad]
     opt = torch.optim.AdamW([
         {"params": [p for n, p in params if not no_decay(n)], "weight_decay": t["weight_decay"]},
