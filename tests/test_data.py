@@ -85,6 +85,22 @@ def test_adversarialqa_loader_drops_validation_articles():
     assert len(train) > 87599 - 7708
 
 
+def test_extra_loaders_drop_validation_articles():
+    """Spec §3.6's counts: 4,899 SQuAD 2.0 and 2,596 AdversarialQA training questions sit on
+    validation articles. The unanswerable ones come with their plausible answer."""
+    if not (D.UNANSWERABLE.exists() and D.EXTRA_TRAIN["adversarialqa"].exists()):
+        pytest.skip("run python -m squadqa.download_external")
+    val_titles = {q.title for q in D.load_split("validation")}
+    unanswerable, adversarial = D.load_unanswerable(), D.load_extra("adversarialqa")
+    assert len(unanswerable) == 43458 - 4899 and len(adversarial) == 29960 - 2596
+    for qs in (unanswerable, adversarial):
+        assert not {q.title for q in qs} & val_titles and all(q.answers for q in qs)
+    q = unanswerable[0]
+    assert q.context[q.answers[0][1]:].startswith(q.answers[0][0])
+    with pytest.raises(KeyError):
+        D.load_extra("squad2")
+
+
 def test_dev_passage_raises_even_with_other_whitespace():
     dev = D.load_squad(D.DEV)[0]
     q = D.Question("x", "Not a dev title", "  " + dev.context.replace(" ", "\n", 3), "?", (("a", 0),))

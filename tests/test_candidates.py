@@ -5,7 +5,7 @@ import pytest
 
 from squadqa import candidates as C
 from squadqa.data import word_spans
-from squadqa.decode import SpanScores, content_flags, log_softmax
+from squadqa.decode import SpanScores, content_flags, group_cores, log_softmax
 
 CONTEXT = "The tower was built in 1889 for the World's Fair in Paris ."
 WORDS = word_spans(CONTEXT)
@@ -139,18 +139,27 @@ def test_lists_save_as_strict_json_with_and_without_a_gold():
     assert all(isinstance(x, int) for x in t["em"]) and t["gold"] is not None
 
 
-def test_build_lists_does_not_depend_on_the_batch():
-    def example(qid, gold):
-        q = SimpleNamespace(id=qid, context=CONTEXT)
-        return SimpleNamespace(question=q, context=SimpleNamespace(words=WORDS), gold=gold)
+def example(qid, first, last=None, occurrence=0):
+    """An Example-like object whose gold (or plausible answer) is the passage's words first..last."""
+    i = [k for k, (s, e) in enumerate(WORDS) if CONTEXT[s:e] == first][occurrence]
+    j = i if last is None else [k for k, (s, e) in enumerate(WORDS) if CONTEXT[s:e] == last and k >= i][0]
+    q = SimpleNamespace(id=qid, context=CONTEXT, answers=((CONTEXT[WORDS[i][0]:WORDS[j][1]], WORDS[i][0]),))
+    return SimpleNamespace(question=q, context=SimpleNamespace(words=WORDS), gold=(i, j))
 
-    cfg = {"verifier": {"k_train": 6, "sample_temperature": 2.0, "k_infer": 5}, "loss_utility": "normalized"}
-    exs = [example("a", (word("1889"),) * 2), example("b", (word("Paris"),) * 2)]
+
+def list_cfg(unit="span"):
+    return {"verifier": {"k_train": 6, "sample_temperature": 2.0, "k_infer": 5, "list_unit": unit},
+            "loss_utility": "normalized"}
+
+
+@pytest.mark.parametrize("unit", ["span", "group"])
+def test_build_lists_does_not_depend_on_the_batch(unit):
+    exs = [example("a", "1889"), example("b", "Paris")]
     spans = [all_spans(len(WORDS), seed=1), all_spans(len(WORDS), seed=2)]
-    both = C.build_lists(exs, spans, "train", cfg, 1.0, seed=0)
-    alone = C.build_lists(exs[1:], spans[1:], "train", cfg, 1.0, seed=0)
+    both = C.build_lists(exs, spans, "train", list_cfg(unit), 1.0, seed=0)
+    alone = C.build_lists(exs[1:], spans[1:], "train", list_cfg(unit), 1.0, seed=0)
     assert np.array_equal(both["b"].starts, alone["b"].starts) and np.array_equal(both["b"].ends, alone["b"].ends)
-    other_seed = C.build_lists(exs, spans, "train", cfg, 1.0, seed=1)
+    other_seed = C.build_lists(exs, spans, "train", list_cfg(unit), 1.0, seed=1)
     assert any(not np.array_equal(both[q].starts, other_seed[q].starts) for q in "ab")
 
 
@@ -255,8 +264,9 @@ def test_summary_of_training_lists():
 
 # The entry point end to end, as a cluster job runs it, with a tiny reader in place of the checkpoint.
 
-@pytest.mark.parametrize("split", ["validation", "train"])
-def test_main_writes_the_lists_and_summary(split, tmp_path, monkeypatch):
+@pytest.mark.parametrize("split, source, unit", [("validation", "squad", "span"), ("train", "squad", "span"),
+                                                ("train", "squad2-unanswerable", "group")])
+def test_main_writes_the_lists_and_summary(split, source, unit, tmp_path, monkeypatch):
     """Two jobs (1008523, 1008579) failed after scoring, while saving: once on int(NaN), once on a
     missing output folder. This runs main() itself, chunks and all, into a fresh scratch folder."""
     torch = pytest.importorskip("torch")
@@ -282,20 +292,36 @@ def test_main_writes_the_lists_and_summary(split, tmp_path, monkeypatch):
     monkeypatch.setattr(Cf, "RESULTS", tmp_path / "results")
     monkeypatch.setattr(P, "load_reader", lambda r, device: (cfg, tok, reader.to(device), 123))
     monkeypatch.setattr(D, "load_split", lambda name: real_split(name)[:40])
+    if source == "squad2-unanswerable":
+        if not D.UNANSWERABLE.exists():
+            pytest.skip("run python -m squadqa.download_external")
+        real_unanswerable = D.load_unanswerable
+        monkeypatch.setattr(D, "load_unanswerable", lambda: real_unanswerable()[:40])
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
-    monkeypatch.setenv("SQUADQA_SCRATCH", str(tmp_path / "scratch"))     # its candidates/ folder doesn't exist yet
+    monkeypatch.setattr(C, "VERIFIER_DATA", tmp_path / "data" / "verifier")     # doesn't exist yet
 
-    C.main(["--run-id", run_id, "--split", split, "--chunk", "16", "--batch-size", "8"])
+    C.main(["--run-id", run_id, "--split", split, "--source", source, "--set", f"verifier.list_unit={unit}",
+            "--chunk", "16", "--batch-size", "8"])
 
-    out = tmp_path / "scratch" / "candidates" / run_id
-    lists = json.loads((out / f"candidates_{split}.json").read_text())
-    summary = json.loads((out / f"summary_{split}.json").read_text())
+    name = split if source == "squad" else f"{source}_{split}"
+    out = tmp_path / "data" / "verifier" / run_id
+    lists = json.loads((out / f"candidates_{name}.json").read_text())
+    summary = json.loads((out / f"summary_{name}.json").read_text())
     assert summary["questions"] == len(lists) > 30 and summary["checkpoint_step"] == 123
-    assert summary["run_id"] == run_id and summary["temperature"] == 1.3
-    assert ("recall@5" in summary) == (split == "validation") and ("sampled_gold" in summary) == (split == "train")
+    assert summary["run_id"] == run_id and summary["temperature"] == 1.3 and summary["source"] == source
+    unanswerable = source == "squad2-unanswerable"
+    assert ("recall@5" in summary) == (split == "validation")
+    assert ("sampled_gold" in summary) == (split == "train" and not unanswerable)
+    assert ("sampled_plausible" in summary) == unanswerable
     first = next(iter(lists.values()))
-    assert set(first) == {"spans", "logp", "f1", "em", "gold", "sampled_gold", "sampled_em"}
+    keys = {"spans", "logp", "f1", "em", "gold", "sampled_em", "top1", *C.LABELS, "official_f1", "official_em", "sibling"}
+    if unanswerable:
+        keys |= {"unanswerable", "plausible", "sampled_plausible", "size"}
+    else:
+        keys |= {"sampled_gold"}
+    assert set(first) == keys
     assert ("recall_em@5" in summary) == (split == "validation") and ("sampled_em" in summary) == (split == "train")
+    assert ("reader_top1" in summary) == (split == "train")
     assert set(summary) >= {"git_commit", "git_dirty", "slurm_job_id"}
 
 
@@ -342,10 +368,17 @@ def test_lists_on_real_questions_with_a_random_reader():
 @pytest.mark.parametrize("key, value", [("train_candidates", "crossfit"), ("sibling_negatives", True),
                                         ("unanswerable_negatives", True)])
 def test_build_lists_refuses_list_options_that_are_not_built(key, value):
-    cfg = {"verifier": {"k_train": 6, "sample_temperature": 2.0, "k_infer": 5, key: value},
-           "loss_utility": "normalized"}
+    cfg = list_cfg()
+    cfg["verifier"][key] = value
     with pytest.raises(NotImplementedError, match=key):
         C.build_lists([], [], "train", cfg, 1.0, 0)
+
+
+def test_build_lists_refuses_an_unknown_unit_and_unanswerable_inference_lists():
+    with pytest.raises(ValueError, match="list_unit"):
+        C.build_lists([], [], "train", list_cfg("word"), 1.0, 0)
+    with pytest.raises(ValueError, match="training lists only"):
+        C.build_lists([], [], "validation", list_cfg(), 1.0, 0, unanswerable=True)
 
 
 def test_a_gold_longer_than_any_candidate_still_labels_the_list():
@@ -358,3 +391,151 @@ def test_a_gold_longer_than_any_candidate_still_labels_the_list():
     assert c.gold is None and not c.sampled_gold and (c.em == 0).all()
     summ = C.summary([c], "validation")
     assert summ["with_gold"] == 1 and summ["recall@1"] == summ["recall_em@1"] == 0
+
+
+# Labels (spec §5.1): between content cores, so the same for every member of a group.
+
+def only(spans, scores=None):
+    """A SpanScores whose valid spans are exactly these, the first the most probable by default."""
+    s, e = zip(*spans)
+    sc = -np.arange(len(spans), dtype=np.float32) if scores is None else np.asarray(scores, np.float32)
+    return SpanScores(np.array(s), np.array(e), sc)
+
+
+def labelled(spans, gold):
+    c = C.inference_list(only(spans), len(spans), FLAGS, 1.0, gold)
+    return {(int(i), int(j)): {k: v[n] for k, v in c.labels.items()} | {"f1": c.f1[n], "em": c.em[n]}
+            for n, (i, j) in enumerate(zip(c.starts, c.ends))}
+
+
+def test_labels_against_the_reference():
+    built, nineteen = word("built"), word("1889")                # "built in 1889" = words 3-5
+    got = labelled([(4, 4), (5, 6), (2, 5), (13, 13), (3, 5)], (built, nineteen))
+    assert got[(4, 4)]["relation"] == "inside"
+    assert got[(4, 4)]["precision"] == 1 and got[(4, 4)]["recall"] == pytest.approx(1 / 3)
+    assert (got[(4, 4)]["start_shift"], got[(4, 4)]["end_shift"], got[(4, 4)]["kind"]) == (1, -1, "boundary")
+    assert got[(5, 6)]["relation"] == "crosses" and (got[(5, 6)]["start_shift"], got[(5, 6)]["end_shift"]) == (2, 1)
+    assert got[(2, 5)]["relation"] == "contains" and got[(2, 5)]["recall"] == 1 and got[(2, 5)]["precision"] == 0.75
+    assert got[(13, 13)]["relation"] == "disjoint" and got[(13, 13)]["kind"] == "wrong" and got[(13, 13)]["gap"] == 13 - 5 - 1
+    assert got[(3, 5)]["relation"] == "same" and got[(3, 5)]["kind"] == "correct" and got[(3, 5)]["gap"] == 0
+    # "The tower" has the core "tower" (word 1): its gap to "Paris" is counted from there
+    assert labelled([(0, 1)], (word("Paris"),) * 2)[(0, 1)]["gap"] == 13 - 1 - 1
+
+
+def test_a_boundary_variant_is_the_same_group_with_no_shift():
+    got = labelled([(7, 11), (8, 11)], (word("World"), word("Fair")))
+    for span in ((7, 11), (8, 11)):
+        assert got[span]["relation"] == "same" and got[span]["kind"] == "correct"
+        assert (got[span]["start_shift"], got[span]["end_shift"]) == (0, 0)
+
+
+def test_labels_are_the_same_for_every_member_of_a_group():
+    s = all_spans(len(WORDS))
+    c = C.inference_list(s, len(s.scores), FLAGS, 1.0, (word("built"), word("1889")))
+    cores = list(zip(*(x.tolist() for x in group_cores(FLAGS, c.starts, c.ends))))
+    keys = [*C.LABELS, "official_f1"] if "official_f1" in c.labels else list(C.LABELS)
+    by_core = {}
+    for n, core in enumerate(cores):
+        row = (c.f1[n], c.em[n], *(c.labels[k][n] for k in keys))
+        assert by_core.setdefault(core, row) == row
+
+
+def test_labels_without_a_reference_are_null():
+    c = C.inference_list(all_spans(6), 3, np.ones(6, bool), 1.0)
+    assert all(v == [None] * 3 for v in c.labels.values()) and c.top1["kind"] is None
+
+
+# Group lists.
+
+@pytest.mark.parametrize("gold", [(8, 11), (5, 5)])
+def test_group_training_lists_hold_distinct_groups_and_the_gold_group(gold):
+    s = all_spans(len(WORDS))
+    logp = log_softmax(s.scores, 1.3)
+    cs, ce = group_cores(FLAGS, s.starts, s.ends)
+    for seed in range(20):
+        c = C.group_list(s, 6, FLAGS, 1.3, gold, np.random.default_rng(seed), 2.0)
+        cores = list(zip(*(x.tolist() for x in group_cores(FLAGS, c.starts, c.ends))))
+        assert len(cores) == len(set(cores)) and 6 <= len(cores) <= 7
+        assert c.gold is not None and c.em[c.gold] == 1 and c.labels["relation"][c.gold] == "same"
+        for n, (a, b) in enumerate(cores):
+            members = (cs == a) & (ce == b)
+            assert c.logp[n] == pytest.approx(np.logaddexp.reduce(logp[members]))
+            assert c.sizes[n] == members.sum()
+            assert s.scores[s.index((int(c.starts[n]), int(c.ends[n])))] == s.scores[members].max()
+
+
+def test_group_sampling_weights_are_the_groups_tempered_probabilities():
+    s = all_spans(len(WORDS), seed=3)
+    gid, rep, _, _, _ = C.span_groups(s, FLAGS)
+    w = C.group_logsumexp(s.scores / 2.0, gid, len(rep))
+    assert np.exp(log_softmax(w)) == pytest.approx(np.bincount(gid, weights=np.exp(log_softmax(s.scores, 2.0))))
+
+
+def test_group_lists_sample_from_the_tempered_group_distribution():
+    """k = 1 with no reference is one draw of a group. Every word counts here, so each span is its
+    own group and the draw follows softmax(scores / sample_temperature)."""
+    s = only([(0, 0), (1, 1), (2, 2)], [0.0, 1.0, 2.0])
+    flags = np.ones(3, bool)
+    for t in (1.0, 3.0):
+        rng = np.random.default_rng(5)
+        draws = [int(C.group_list(s, 1, flags, 1.0, None, rng, t).starts[0]) for _ in range(4000)]
+        freq = np.bincount(draws, minlength=3) / len(draws)
+        assert freq == pytest.approx(np.exp(log_softmax(s.scores, t)), abs=0.03)
+
+
+def test_group_inference_lists_are_the_top_k_groups():
+    s = all_spans(len(WORDS), seed=4)
+    gid, rep, _, _, _ = C.span_groups(s, FLAGS)
+    logp = C.group_logsumexp(log_softmax(s.scores, 1.3), gid, len(rep))
+    c = C.group_list(s, 5, FLAGS, 1.3, (5, 5))
+    assert sorted(c.logp.tolist(), reverse=True) == pytest.approx(np.sort(logp)[::-1][:5])
+    assert c.top1["p"] == pytest.approx(np.exp(logp.max()))
+
+
+# Unanswerable lists (SQuAD 2.0): the plausible answer in place of the gold.
+
+@pytest.mark.parametrize("unit", ["span", "group"])
+def test_unanswerable_lists_hold_the_plausible_answer_and_no_gold(unit):
+    ex = example("u", "Paris")
+    siblings = C.sibling_index([example("a", "Paris").question])      # an answerable question with that answer
+    c = C.build_lists([ex], [all_spans(len(WORDS))], "train", list_cfg(unit), 1.0, 0, unanswerable=True,
+                      siblings=siblings)["u"]
+    pairs = list(zip(c.starts.tolist(), c.ends.tolist()))
+    assert c.unanswerable and c.gold is None and c.em[c.plausible] == 1 and c.labels["relation"][c.plausible] == "same"
+    if unit == "span":                                # a group list shows the group's most probable member
+        assert pairs[c.plausible] == ex.gold
+    j = c.to_json()
+    assert j["gold"] is None and j["unanswerable"] and j["plausible"] == c.plausible
+    assert "sampled_plausible" in j and "sampled_gold" not in j
+    s = C.summary([c], "train")
+    assert "sampled_plausible" in s and "sampled_gold" not in s and s["reader_top1"]["kind"]
+    assert s["others"]["candidates"] == len(pairs) - 1 and s["reference_sibling"] == 1
+
+
+def test_an_unanswerable_question_without_an_aligned_plausible_answer_has_no_labels():
+    c = C.unanswerable_list(all_spans(len(WORDS)), None, 5, 2.0, np.random.default_rng(0), FLAGS, 1.0)
+    assert c.plausible is None and len(c.starts) == 5 and np.isnan(c.f1).all()
+
+
+# Labels that need the texts: the official scorer and siblings.
+
+def test_official_labels_accept_the_same_text_elsewhere_and_em_does_not():
+    ex = example("q", "in")                                       # the gold is the first "in" (word 4)
+    s = only([(4, 4), (12, 12), (13, 13)])
+    c = C.build_lists([ex], [s], "validation", list_cfg(), 1.0, 0)["q"]
+    pairs = list(zip(c.starts.tolist(), c.ends.tolist()))
+    k = pairs.index((12, 12))
+    assert c.labels["official_em"][k] == 1 and c.em[k] == 0 and c.labels["relation"][k] == "disjoint"
+    assert c.labels["official_em"][pairs.index((13, 13))] == 0 and c.top1["official_em"] == 1
+
+
+def test_sibling_marks_another_questions_gold_on_the_passage():
+    ex = example("q", "tower")
+    siblings = C.sibling_index([SimpleNamespace(id="other", context=CONTEXT, answers=(("Paris", CONTEXT.index("Paris")),)),
+                                ex.question])
+    s = only([(1, 1), (13, 13), (0, 1)])
+    c = C.build_lists([ex], [s], "validation", list_cfg(), 1.0, 0, siblings=siblings)["q"]
+    pairs = list(zip(c.starts.tolist(), c.ends.tolist()))
+    assert c.labels["sibling"][pairs.index((13, 13))]
+    assert not c.labels["sibling"][pairs.index((1, 1))]           # its own gold is not a sibling
+    assert not c.labels["sibling"][pairs.index((0, 1))] and c.top1["sibling"] is False
