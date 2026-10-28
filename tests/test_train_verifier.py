@@ -30,9 +30,26 @@ def test_evaluate_picks_lambda_and_lets_the_verifier_overturn_the_reader():
     ex = [SimpleNamespace(question=SimpleNamespace(id=f"q{k}", context=ctx), context=SimpleNamespace(words=words))
           for k in range(2)]
     entry = {"spans": [[7, 7], [5, 5]], "logp": [-0.4, -1.1], "em": [0, 1]}   # reader: "Paris"; gold "1889"
-    fit, preds = TV.evaluate(ex, [entry, entry], [np.array([-3.0, 3.0])] * 2)
+    rcfg = {"decode_rules": ["map", "mbr"], "mbr_utility": "normalized", "mbr_em_weight": 1.0}
+    fit, preds = TV.evaluate(ex, [entry, entry], [np.array([-3.0, 3.0])] * 2, rcfg)
     assert fit["lambda"] > 0 and fit["lambda_questions"] == 2
-    assert preds["reader"]["q0"] == "Paris" and preds["combined"]["q0"] == "1889"
+    assert preds["reader_map"]["q0"] == "Paris" and preds["combined_map"]["q0"] == "1889"
+    assert preds["combined_mbr"]["q1"] == "1889"
+
+
+def test_evaluate_groups_boundary_variants_like_the_readers_map():
+    """"The tower" and "tower" are one group under normalized utility (an article is not a content
+    word): together they outweigh "Paris", and the answer is the group's most probable span."""
+    from types import SimpleNamespace
+    from squadqa.data import word_spans
+
+    ctx = "The tower was built in 1889 in Paris ."
+    words = word_spans(ctx)
+    ex = [SimpleNamespace(question=SimpleNamespace(id="q", context=ctx), context=SimpleNamespace(words=words))]
+    entry = {"spans": [[7, 7], [0, 1], [1, 1]], "logp": [np.log(0.4), np.log(0.35), np.log(0.25)], "em": [0, 1, 1]}
+    rcfg = {"decode_rules": ["map"], "mbr_utility": "normalized", "mbr_em_weight": 1.0}
+    _, preds = TV.evaluate(ex, [entry], [np.zeros(3)], rcfg)
+    assert preds["reader_map"]["q"] == "The tower"
 
 
 def _trim(dataset, ids):
@@ -95,11 +112,11 @@ def test_main_trains_resumes_and_scores(tmp_path, monkeypatch, capsys):
     out = tmp_path / "results" / run
     metrics = json.loads((out / "metrics.json").read_text())
     assert metrics["steps"] == 3 and metrics["reader"] == reader_run and 0 <= metrics["lambda"] <= 5
-    assert set(metrics["validation"]) == {"reader", "combined"}
+    assert set(metrics["validation"]) == {f"{w}_{r}" for w in ("reader", "combined") for r in ("map", "mbr")}
     scores = json.loads((out / "verifier_scores_validation.json").read_text())
     lists = json.loads((tmp_path / "scratch" / "candidates" / reader_run / "candidates_validation.json").read_text())
     assert set(scores) == ids and all(len(scores[q]) == len(lists[q]["spans"]) for q in ids)
-    for name in ("reader", "combined"):
+    for name in metrics["validation"]:
         assert set(json.loads((out / f"predictions_validation_{name}.json").read_text())) == ids
     trained = loaded[-1]                                                # V4 on the real loop
     after = {n.replace(".base_layer.", "."): p for n, p in trained.named_parameters() if "lora_" not in n}

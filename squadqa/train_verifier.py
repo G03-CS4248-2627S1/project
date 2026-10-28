@@ -21,8 +21,9 @@
 
 Then, on the validation top-k lists: λ is fit by verifier.fit_lambda (the NLL of the gold's EM-1
 candidates), and results/<run_id>/ gets the verifier scores of every candidate, the predictions of
-the reader alone (λ = 0, its top-1 among the k) and combined (the argmax of log p_reader + λ · s),
-and metrics.json with both scored by the official scorer. λ is fit on the split it is scored on
+the reader alone (λ = 0) and combined (log p_reader + λ · s), each decoded by the reader's own
+decode_rules (MAP and MBR, boundary variants grouped, decode.decode), and metrics.json with all of
+them scored by the official scorer. λ is fit on the split it is scored on
 (plan §4.3: tuned on validation), so the combined score is slightly optimistic.
 
 --max-steps and --stop-after are for smoke runs (spec §9), as in train_reader: resume with the same
@@ -206,9 +207,13 @@ def score_lists(v, marker: Marker, examples: list[D.Example], entries: list[dict
     return out
 
 
-def evaluate(examples: list[D.Example], entries: list[dict], scores: list[np.ndarray]) -> tuple[dict, dict]:
-    """λ, the predictions of the reader alone and combined, and the inputs fit_lambda used."""
-    from squadqa.decode import answer_text
+def evaluate(examples: list[D.Example], entries: list[dict], scores: list[np.ndarray],
+             rcfg: dict) -> tuple[dict, dict]:
+    """λ, and the predictions of the reader alone (λ = 0) and combined under each of the reader's
+    decode_rules. Both go through decode.decode on the k candidates, so boundary variants are grouped
+    as in the reader's own MAP and MBR; the reader alone over k = 5 can differ slightly from its
+    run's predictions, which decode over decode_topk."""
+    from squadqa.decode import Candidates, answer_text, content_flags, decode
 
     items = []
     for e, s in zip(entries, scores):
@@ -218,12 +223,16 @@ def evaluate(examples: list[D.Example], entries: list[dict], scores: list[np.nda
     lam = V.fit_lambda(items) if items else 0.0         # no list holds its gold: the reader alone, not a crash after training
     if not items:
         print("warning: no validation list holds an EM-1 candidate, so λ = 0", flush=True)
-    preds = {"reader": {}, "combined": {}}
+    preds = {f"{who}_{rule}": {} for who in ("reader", "combined") for rule in rcfg["decode_rules"]}
     for ex, e, s in zip(examples, entries, scores):
         q = ex.question
-        for name, lp in (("reader", np.array(e["logp"])), ("combined", V.combine(e["logp"], s, lam))):
-            i, j = e["spans"][int(np.argmax(lp))]
-            preds[name][q.id] = answer_text(q.context, ex.context.words, i, j)
+        flags = content_flags(q.context, ex.context.words)
+        starts, ends = np.array([a for a, _ in e["spans"]]), np.array([b for _, b in e["spans"]])
+        texts = [answer_text(q.context, ex.context.words, a, b) for a, b in e["spans"]]
+        for who, lp in (("reader", np.array(e["logp"], dtype=np.float64)), ("combined", V.combine(e["logp"], s, lam))):
+            for rule in rcfg["decode_rules"]:
+                i, j = decode(Candidates(starts, ends, lp), flags, rule, rcfg["mbr_utility"], rcfg["mbr_em_weight"], texts)
+                preds[f"{who}_{rule}"][q.id] = answer_text(q.context, ex.context.words, i, j)
     return {"lambda": lam, "lambda_questions": len(items)}, preds
 
 
@@ -293,7 +302,7 @@ def main(argv: list[str] | None = None) -> None:
     if len(vexamples) != len(vfeats.examples):
         raise RuntimeError(f"{len(vfeats.examples) - len(vexamples)} validation questions have no list")
     scores = score_lists(v, marker, vexamples, ventries, device, tok.pad_token_id, args.per_device_batch)
-    fit, preds = evaluate(vexamples, ventries, scores)
+    fit, preds = evaluate(vexamples, ventries, scores, rcfg)
     dataset = E.load_eval_set("validation")
     for name, answers in preds.items():
         C.write_json(run_dir / f"predictions_validation_{name}.json", answers)
