@@ -1,11 +1,20 @@
-"""Train the shared_lora verifier (spec §5.4; #67) on a reader's candidate lists, then score validation.
+"""Train a verifier (spec §5.4: shared_lora, #67, or separate, #68) on a reader's candidate lists,
+then score validation.
 
     python -m squadqa.train_verifier --reader <reader run_id> --config configs/experiments/verifier-shared-lora.yaml \
         --seed 0 [--run-id ID] [--set verifier.train.lr=2.0e-4] [--per-device-batch 16] [--max-steps N] [--stop-after N]
+    python -m squadqa.train_verifier --reader <reader run_id> --config configs/experiments/verifier-separate.yaml \
+        --seed 0 [--set verifier.separate_model=answerdotai/ModernBERT-base] ...
 
-- The reader is the frozen final reader: its run's config sets the windows, its checkpoint the
-  weights (predict.load_reader). The verifier adds LoRA, two marker embeddings and a head, and only
-  those train (squadqa.verifier.SharedLoraVerifier); V4 is checked at the end of training.
+- The reader is the frozen final reader: its run's config sets the windows, in both variants.
+- shared_lora (verifier.variant): the reader's checkpoint gives the weights (predict.load_reader).
+  The verifier adds LoRA, two marker embeddings and a head, and only those train
+  (squadqa.verifier.SharedLoraVerifier); V4 is checked at the end of training.
+- separate: verifier.separate_model (ModernBERT-large) with its own tokenizer, every weight
+  trained (squadqa.verifier.SeparateVerifier). The reader's weights are not loaded: its tokenizer
+  only builds the windows, so both variants see the same characters. Weight decay skips biases
+  and every LayerNorm, found by module type (no_decay), since ModernBERT's norms aren't called
+  LayerNorm.
 - The lists are squadqa.candidates' training and validation lists of that reader, from
   data/verifier/<reader>/ (candidates.VERIFIER_DATA) unless --lists names another folder. Fields
   this script doesn't use are ignored, so lists with more labels (#93) load too, per span or per
@@ -16,8 +25,10 @@
   f1_target_floor (spec §5.1, "same α, τ, φ form"); α = 0 is one-hot on the gold.
 - verifier.train holds the optimizer settings, effective_batch in questions per step. bf16 autocast
   on the GPU, fp32 trainable parameters and optimizer state (spec §9).
-- Checkpoints hold the trainable parameters, optimizer and schedule only (the reader is its own
-  run's checkpoint), in $SQUADQA_SCRATCH/runs/<run_id>/checkpoint.pt every
+- Checkpoints hold the trainable parameters, optimizer and schedule only (for shared_lora the
+  reader is its own run's checkpoint; separate saves its whole encoder: for ModernBERT-large's
+  395M parameters, weights and Adam state in fp32 make about 4.7 GB), in
+  $SQUADQA_SCRATCH/runs/<run_id>/checkpoint.pt every
   verifier.train.checkpoint_every steps and at the end. Re-running with the same run id resumes.
 
 Then, on the validation top-k lists (evaluate; spec §5.1, "Combining"): λ is fit by
@@ -74,11 +85,17 @@ def load_lists(folder: Path, split: str) -> dict[str, dict]:
     return json.loads(path.read_text(encoding="ascii"))
 
 
-class Marker:
-    """Marks and encodes one question's candidates with the reader's windows (spec §5.3)."""
+VARIANTS = ("shared_lora", "separate")
 
-    def __init__(self, tok, rcfg: dict, open_id: int, close_id: int):
+
+class Marker:
+    """Marks one question's candidates in the reader's windows (spec §5.3: tok is the reader's
+    tokenizer) and encodes them with the verifier's tokenizer (encoder_tok; the reader's by default,
+    as in shared_lora)."""
+
+    def __init__(self, tok, rcfg: dict, open_id: int, close_id: int, encoder_tok=None):
         self.tok, self.rcfg, self.ids = tok, rcfg, (open_id, close_id)
+        self.encoder_tok = encoder_tok or tok
         self.layout = D.pair_layout(tok)
 
     def encode(self, ex: D.Example, spans: list[list[int]]) -> list[V.Encoded]:
@@ -89,7 +106,7 @@ class Marker:
         for i, j in spans:
             lo, hi = V.candidate_window(windows, ex.context, i, j)
             m = V.mark(ex.question.context, ex.context.words, i, j, lo, hi)
-            out.append(V.encode(self.tok, ex.question.question, m, *self.ids))
+            out.append(V.encode(self.encoder_tok, ex.question.question, m, *self.ids))
         return out
 
 
@@ -122,6 +139,16 @@ def reader_fingerprint(v: V.SharedLoraVerifier) -> float:
     """A float64 sum over every reader weight (base layers under LoRA included, the adapters not)."""
     with torch.no_grad():
         return float(sum(p.double().sum() for n, p in v.reader.named_parameters() if "lora_" not in n))
+
+
+def no_decay(model: torch.nn.Module):
+    """build_optimizer's no-decay rule by module type: biases and every LayerNorm's weights.
+    train_reader's rule goes by name (DeBERTa's LayerNorm) and would decay ModernBERT's norms
+    (norm, attn_norm, mlp_norm, final_norm). For shared_lora both rules pick the same
+    parameters, since none of its LayerNorms trains."""
+    names = {f"{mn}.{pn}" if mn else pn for mn, m in model.named_modules()
+             for pn, _ in m.named_parameters(recurse=False) if pn == "bias" or isinstance(m, torch.nn.LayerNorm)}
+    return names.__contains__
 
 
 def save_checkpoint(path: Path, v, opt, sched, step: int) -> None:
@@ -158,7 +185,7 @@ def train(v, marker: Marker, examples: list[D.Example], entries: list[dict], cfg
     n = len(examples)
     n_batches = -(-n // t["effective_batch"])
     total_steps = max_steps or n_batches * t["epochs"]
-    opt, sched = build_optimizer(v, {"train": t}, total_steps)
+    opt, sched = build_optimizer(v, {"train": t}, total_steps, no_decay(v))
     step = load_checkpoint(ckpt_path, v, opt, sched) if ckpt_path.exists() else 0
     if step:
         log(f"resumed from step {step}")
@@ -297,9 +324,10 @@ def by_id(feats: D.Features, lists: dict[str, dict]) -> tuple[list[D.Example], l
 def main(argv: list[str] | None = None) -> None:
     from squadqa import predict as P
 
-    parser = argparse.ArgumentParser(description="Train the shared_lora verifier, then score validation.")
+    parser = argparse.ArgumentParser(description="Train a verifier, then score validation.")
     C.add_run_args(parser)
-    parser.add_argument("--reader", required=True, help="the frozen reader's run id (its lists and checkpoint)")
+    parser.add_argument("--reader", required=True,
+                        help="the frozen reader's run id (its lists, its windows, and for shared_lora its checkpoint)")
     parser.add_argument("--lists", help="folder of the candidate lists (default: data/verifier/<reader>)")
     parser.add_argument("--per-device-batch", type=int, default=16,
                         help="candidates per forward pass (a question's candidates stay together)")
@@ -308,8 +336,9 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     cfg = C.load_config(args.config, args.set)
-    if cfg["verifier"]["variant"] != "shared_lora" or cfg["verifier"]["type"] != "in_place":
-        raise NotImplementedError("only the in-place shared_lora verifier is built (#67)")
+    variant = cfg["verifier"]["variant"]
+    if variant not in VARIANTS or cfg["verifier"]["type"] != "in_place":
+        raise NotImplementedError(f"only the in-place verifiers are built ({', '.join(VARIANTS)}; #67, #68)")
     for key, default in NOT_BUILT.items():
         if cfg["verifier"].get(key, default) != default:
             raise NotImplementedError(f"verifier.{key}: {cfg['verifier'][key]!r} is not built; only {default!r}")
@@ -321,11 +350,21 @@ def main(argv: list[str] | None = None) -> None:
     gpu = torch.cuda.get_device_name() if device == "cuda" else "cpu"
     print(f"run {run_dir.name} on {gpu}; reader {args.reader}; checkpoints in {ckpt_dir}", flush=True)
 
-    rcfg, tok, reader, reader_step = P.load_reader(args.reader, device)
-    open_id, close_id = V.add_markers(tok)
-    V.resize_for_markers(reader.encoder, tok)
-    v = V.SharedLoraVerifier(reader, open_id, close_id, cfg).to(device)
-    marker = Marker(tok, rcfg, open_id, close_id)
+    if variant == "shared_lora":
+        rcfg, tok, reader, reader_step = P.load_reader(args.reader, device)
+        vtok = tok
+        open_id, close_id = V.add_markers(vtok)
+        V.resize_for_markers(reader.encoder, vtok)
+        v = V.SharedLoraVerifier(reader, open_id, close_id, cfg).to(device)
+    else:                                               # the reader's windows only, not its weights
+        rcfg, reader_step = P.run_config(args.reader), None
+        tok = D.load_tokenizer(rcfg["model"])
+        vtok = D.load_tokenizer(cfg["verifier"]["separate_model"])
+        encoder = V.load_separate_encoder(cfg["verifier"]["separate_model"])
+        open_id, close_id = V.add_markers(vtok)
+        V.resize_for_markers(encoder, vtok)
+        v = V.SeparateVerifier(encoder, open_id, close_id, cfg).to(device)
+    marker = Marker(tok, rcfg, open_id, close_id, vtok)
     folder = lists_dir(args.reader, args.lists)
 
     t0 = time.time()
@@ -333,10 +372,10 @@ def main(argv: list[str] | None = None) -> None:
     examples, entries = by_id(feats, load_lists(folder, "train"))
     print(f"{len(examples)} training lists, {sum(len(e['spans']) for e in entries)} candidates; "
           f"loaded in {time.time() - t0:.0f} s", flush=True)
-    before = reader_fingerprint(v)
-    result = train(v, marker, examples, entries, cfg, args.seed, tok.pad_token_id, ckpt_dir / CHECKPOINT,
+    before = reader_fingerprint(v) if variant == "shared_lora" else None
+    result = train(v, marker, examples, entries, cfg, args.seed, vtok.pad_token_id, ckpt_dir / CHECKPOINT,
                    args.per_device_batch, device, args.max_steps, args.stop_after, log=lambda m: print(m, flush=True))
-    if reader_fingerprint(v) != before:
+    if before is not None and reader_fingerprint(v) != before:
         raise RuntimeError("a reader weight changed during verifier training (V4)")
     if result["stopped_early"]:
         print(f"stopped after step {result['steps']} (--stop-after); rerun with --run-id {run_dir.name} to resume",
@@ -348,7 +387,7 @@ def main(argv: list[str] | None = None) -> None:
     vexamples, ventries = by_id(vfeats, load_lists(folder, "validation"))
     if len(vexamples) != len(vfeats.examples):
         raise RuntimeError(f"{len(vfeats.examples) - len(vexamples)} validation questions have no list")
-    scores = score_lists(v, marker, vexamples, ventries, device, tok.pad_token_id, args.per_device_batch)
+    scores = score_lists(v, marker, vexamples, ventries, device, vtok.pad_token_id, args.per_device_batch)
     # Evaluate the scores as saved (6 decimals), so a later --rescore reproduces this evaluation exactly.
     scores = [np.array([round(float(x), 6) for x in s]) for s in scores]
     C.write_json(run_dir / SCORES, {ex.question.id: s.tolist() for ex, s in zip(vexamples, scores)})

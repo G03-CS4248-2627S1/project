@@ -132,14 +132,15 @@ def _trim(dataset, ids):
     return out
 
 
-@pytest.mark.parametrize("unit", ["span", "group"])
-def test_main_trains_resumes_and_scores(unit, tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize("variant,unit", [("shared_lora", "span"), ("shared_lora", "group"), ("separate", "span")])
+def test_main_trains_resumes_and_scores(variant, unit, tmp_path, monkeypatch, capsys):
     """candidates.main then train_verifier.main, as the cluster jobs run them, on a tiny reader and
     30 questions per split, into fresh folders: a run stopped early (--stop-after) resumes from its
     checkpoint, finishes and writes its results (jobs 1008523 and 1008579 failed while saving).
     Then --rescore rebuilds the same evaluation from the saved scores. Lists per span and per group
-    (verifier.list_unit, #93)."""
+    (verifier.list_unit, #93); the separate variant on a tiny ModernBERT with its real tokenizer."""
     from squadqa import candidates as Cand, config as Cf, data as D, evaluate as E, heads as H, predict as P
+    from squadqa import verifier as V
 
     rcfg = Cf.load_config("configs/experiments/row1-joint.yaml")
     try:
@@ -166,14 +167,29 @@ def test_main_trains_resumes_and_scores(unit, tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("SQUADQA_SCRATCH", str(tmp_path / "scratch"))   # nothing in it exists yet
     monkeypatch.setattr(Cand, "VERIFIER_DATA", tmp_path / "data" / "verifier")
     monkeypatch.setattr(TV, "VERIFIER_DATA", tmp_path / "data" / "verifier")
-    monkeypatch.setattr(P, "run_config", lambda r: rcfg)                # rescore reads the reader's config only
+    monkeypatch.setattr(P, "run_config", lambda r: rcfg)                # rescore and separate read the reader's config only
+    encoders = []
+    if variant == "separate":
+        vtok_name = Cf.load_config("configs/experiments/verifier-separate.yaml")["verifier"]["separate_model"]
+        try:
+            D.load_tokenizer(vtok_name)
+        except (OSError, RuntimeError) as e:
+            pytest.skip(f"tokenizer not available: {e}")
+        torch.manual_seed(1)
+        tiny = transformers.AutoModel.from_config(transformers.ModernBertConfig(
+            vocab_size=50368, hidden_size=32, intermediate_size=64, num_hidden_layers=3, num_attention_heads=2,
+            global_attn_every_n_layers=3, local_attention=8, pad_token_id=50283), attn_implementation=V.ATTENTION)
+        monkeypatch.setattr(V, "load_separate_encoder",                 # a fresh encoder per job, as on the cluster
+                            lambda name: encoders.append((name, copy.deepcopy(tiny))) or encoders[-1][1])
 
     unit_set = ["--set", f"verifier.list_unit={unit}"]
     for split in ("train", "validation"):
         Cand.main(["--run-id", reader_run, "--split", split, "--chunk", "16", "--batch-size", "8", *unit_set])
+    readers_for_lists = len(loaded)
 
     run = "fake-verifier-run"
-    common = ["--reader", reader_run, "--config", "configs/experiments/verifier-shared-lora.yaml", "--seed", "0",
+    config = f"configs/experiments/verifier-{variant.replace('_', '-')}.yaml"
+    common = ["--reader", reader_run, "--config", config, "--seed", "0",
               "--run-id", run, "--per-device-batch", "24", "--max-steps", "3",
               "--set", "verifier.lora.rank=4", "--set", "verifier.train.effective_batch=4", *unit_set]
     TV.main(common + ["--stop-after", "2"])
@@ -199,9 +215,20 @@ def test_main_trains_resumes_and_scores(unit, tmp_path, monkeypatch, capsys):
     assert ("size" in next(iter(lists.values()))) == (unit == "group")
     preds = {name: json.loads((out / f"predictions_validation_{name}.json").read_text()) for name in metrics["validation"]}
     assert all(set(p) == ids for p in preds.values())
-    trained = loaded[-1]                                                # V4 on the real loop
-    after = {n.replace(".base_layer.", "."): p for n, p in trained.named_parameters() if "lora_" not in n}
-    assert all(torch.equal(after[n], p) for n, p in reader.named_parameters())
+    if variant == "shared_lora":
+        trained = loaded[-1]                                            # V4 on the real loop
+        after = {n.replace(".base_layer.", "."): p for n, p in trained.named_parameters() if "lora_" not in n}
+        assert all(torch.equal(after[n], p) for n, p in reader.named_parameters())
+    else:                                                               # no reader weights; the encoder trained and was saved
+        assert len(loaded) == readers_for_lists                         # train_verifier loaded no reader
+        assert [n for n, _ in encoders] == [vtok_name] * 2 and metrics["reader_step"] is None
+        saved = torch.load(ckpt, weights_only=False)["trainable"]
+        assert set(saved) == {f"encoder.{n}" for n, _ in tiny.named_parameters()} | {"head.0.weight", "head.0.bias", "head.3.weight", "head.3.bias"}
+        assert saved["encoder.embeddings.tok_embeddings.weight"].shape[0] == 50370
+        assert not torch.equal(saved["encoder.layers.0.attn.Wqkv.weight"], tiny.layers[0].attn.Wqkv.weight)
+        groups = torch.load(ckpt, weights_only=False)["opt"]["param_groups"]      # no decay on every norm (no_decay)
+        no_wd = [g for g in groups if g["weight_decay"] == 0.0]
+        assert len(no_wd) == 1 and len(no_wd[0]["params"]) == sum("norm" in n for n, _ in tiny.named_parameters()) + 2
 
     capsys.readouterr()
     TV.cli(["--rescore", run])                                          # from the saved scores, no model
@@ -240,7 +267,9 @@ def test_rescore_refuses_other_lists(tmp_path, monkeypatch):
 
 
 def test_main_refuses_settings_that_are_not_built():
-    with pytest.raises(NotImplementedError, match="shared_lora"):
-        TV.main(["--reader", "x", "--seed", "0", "--set", "verifier.variant=separate"])
+    with pytest.raises(NotImplementedError, match="in-place"):
+        TV.main(["--reader", "x", "--seed", "0", "--set", "verifier.type=levitated"])
+    with pytest.raises(NotImplementedError, match="in-place"):
+        TV.main(["--reader", "x", "--seed", "0", "--set", "verifier.variant=both"])
     with pytest.raises(NotImplementedError, match="sibling_negatives"):
         TV.main(["--reader", "x", "--seed", "0", "--set", "verifier.sibling_negatives=true"])

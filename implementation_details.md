@@ -80,7 +80,7 @@ verifier:
   sibling_negatives: false             # P2 ablation (§3.5)
   unanswerable_negatives: false        # row 5: SQuAD 2.0 unanswerable questions with a null candidate (§5.1)
   train:                               # squadqa.train_verifier (#67); provisional, tuned on base (plan §16: lr, LoRA rank, λ)
-    lr: 1.0e-4                         # LoRA, markers and head; the frozen reader has none
+    lr: 1.0e-4                         # shared_lora: LoRA, markers and head (the frozen reader has none); verifier-separate.yaml sets its own
     epochs: 1
     warmup_frac: 0.1
     weight_decay: 0.01
@@ -383,8 +383,11 @@ Not the default: the default candidates are sampled from the final reader (§5.1
   - Reader passes run with the adapter disabled (`with model.disable_adapter():`); verifier passes run with it enabled. Built as `squadqa.verifier.SharedLoraVerifier`: LoRA is injected into the reader's encoder in place (`peft.inject_adapter_in_model`), so the reader keeps its structure, and `verifier.adapters(encoder, False)` switches it off (off reproduces the reader exactly, `torch.equal`).
   - Train only the LoRA weights, the two marker embeddings and the verifier head. Keep the existing embedding rows frozen, so the reader is unchanged (test V4).
     - The marker embeddings are their own 2-row parameter, written over the word embeddings at the marker ids. Training two rows of the table by masking its gradient would move every row, because AdamW's weight decay ignores a zero gradient (checked 2026-10-23).
-- **`separate`:** `verifier.separate_model` (ModernBERT-large), fully fine-tuned with its own tokenizer.
-  - Pinned in `MODELS` in `squadqa/download_model.py` (base and large); load it with an explicit dtype (§9).
+- **`separate`:** `verifier.separate_model` (ModernBERT-large), fully fine-tuned with its own tokenizer (`configs/experiments/verifier-separate.yaml`). Built as `squadqa.verifier.SeparateVerifier`.
+  - Pinned in `MODELS` in `squadqa/download_model.py` (base and large). `verifier.load_separate_encoder` loads it in fp32 (§9) with PyTorch's attention (`attn_implementation="sdpa"`), so installing flash-attn would change nothing.
+  - The reader's weights are not loaded. Its run's config and tokenizer only choose each candidate's window (§5.3).
+  - The markers are two new rows of ModernBERT's embedding table, which has no spare rows (50,368 rows, 50,368 tokenizer entries). They start at the mean of the other rows and train with the rest. ModernBERT's byte-level BPE keeps the space before each marker as a token of its own (`Ġin Ġ <a> Ġ1889`), where DeBERTa-v3's tokenizer drops it.
+  - The head is `shared_lora`'s (§5.3). Every weight trains, at the config's own learning rate (3e-5, provisional; tuned on base, plan §15.3). Weight decay skips biases and LayerNorm weights found by module type (`train_verifier.no_decay`), because ModernBERT's norms (`attn_norm`, `mlp_norm`, …) don't match the reader's name rule.
   - Smoke-test it like any new training script (§9).
 
 ### 5.5 Levitated markers (P3)

@@ -56,7 +56,7 @@ verifier:
   sibling_negatives: false             # P2 ablation (§3.5)
   unanswerable_negatives: false        # row 5: SQuAD 2.0 unanswerable questions with a null candidate (§5.1)
   train:                               # squadqa.train_verifier (#67); provisional, tuned on base (plan §16: lr, LoRA rank, λ)
-    lr: 1.0e-4                         # LoRA, markers and head; the frozen reader has none
+    lr: 1.0e-4                         # shared_lora: LoRA, markers and head (the frozen reader has none); verifier-separate.yaml sets its own
     epochs: 1
     warmup_frac: 0.1
     weight_decay: 0.01
