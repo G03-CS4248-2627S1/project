@@ -2,7 +2,7 @@
 
 Implementation spec for coding agents and team members.
 
-- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.10). **How:** this file. **When:** [timeline.md](timeline.md). **How we work:** [workflow.md](workflow.md).
+- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.12). **How:** this file. **When:** [timeline.md](timeline.md). **How we work:** [workflow.md](workflow.md).
 - Week labels such as W2 or W5+ are plan weeks: W1–W7 are course weeks 7–13.
 - If this file and the plan disagree, stop and ask a human.
 
@@ -50,10 +50,11 @@ f1_target_weight: 0.0                  # α, the F1:EM loss ratio (§4.3); 0 = o
 f1_target_temperature: 0.1             # τ: how evenly the F1 credit is spread
 f1_target_floor: 0.5                   # φ: spans with F1 < φ get no F1 credit; 0 = every overlapping span
 target_unit: span                      # span = targets per span (t_EM on the annotated span) | group = per group of boundary variants, so both parts count the gold answer once (§4.3; needs loss_utility normalized and a joint or compound head, so the default stays span for row 0); ladder row 1 sets group in its config
-risk_weight: 0.0                       # β: weight of the expected-F1 (risk) loss added to the target loss (§4.3); 0 = none
+risk_share: 0.0                        # β: share of the expected-F1 (risk) loss, ℒ = (1 − β) · ℒ_soft + β · ℒ_risk (§4.3); 0 = none, 1 = risk loss alone
 risk_em_weight: 0.0                    # γ_r: weight of the EM loss inside the risk term, ℒ_risk = Σ p · (ℓ_F1 + γ_r · ℓ_EM) (§4.3); 0 = F1 only. Separate from the decoding γ
 calibration: temperature               # one T, fit on validation split
 extra_train_data: []                   # row 5: [adversarialqa]; augmentation (P2) adds augmented
+continue_from: null                    # a run id: start from that run's checkpoint and follow this config's schedule from its step, e.g. train.epochs 3 after a 2-epoch run; only the epochs may differ (§9)
 train:                                 # reader fine-tuning: the plan's sandbox recipe (plan §15.1); lr and epochs tuned in row 0 (plan §15.3)
   lr: 2.0e-5                           # write floats with a dot: YAML reads 2e-5 as a string
   epochs: 1
@@ -70,6 +71,8 @@ verifier:
   shared_option: B                     # levitated_shared only (P3): A = fully shared multi-task, B = frozen reader + marker-only LoRA
   lora: {rank: 16, alpha: 32, targets: [query_proj, key_proj, value_proj]}   # shared_lora and option B; check module names in the installed HF version
   k_infer: 5
+  k_train: 8                           # spans sampled per training question, before the gold and its boundary variants are added (squadqa.candidates; #66): lists of 10.4 on average
+  sample_temperature: 2.0              # divides the reader's raw span scores when sampling training candidates, above 1 so the lists hold more than the reader's favourites; one value, checked on validation (#66, 24 Oct): before the gold is added, the samples hold an EM-1 span 93.9% of the time, as the validation top-5 does (93.9%), so the sampled distractors are about as hard as the reader's real mistakes; other values not tried
   k_sweep: [5, 10, 20, 30]             # levitated variants only (P3)
   train_candidates: sampled            # sampled = drawn from the final reader's own span distribution (plan §4.3) | crossfit (E2 ablation)
   crossfit_folds: 3                    # crossfit ablation only, on base
@@ -243,19 +246,22 @@ t_F1(y) ∝ exp(−ℓ_F1(y, y*) / τ) where F1 > 0 and F1 ≥ φ, else 0     # 
 target_unit group:  ℒ_soft = (1 − α) · (− log p(G*)) + α · (− Σ_G t_F1(G) · log p(G))
   G = a group of boundary variants, G* the gold's; p(G) = Σ_{y ∈ G} p(y); t_F1 as above, one weight per group
 ℒ_risk = Σ_y p(y) · [ℓ_F1(y, y*) + γ_r · ℓ_EM(y, y*)]   # every valid span; no floor; γ_r = 0: F1 only
-ℒ = ℒ_soft + β · ℒ_risk                            # β = risk_weight, γ_r = risk_em_weight (plan §6.2)
+ℒ = (1 − β) · ℒ_soft + β · ℒ_risk                 # β = risk_share in [0, 1], γ_r = risk_em_weight (plan §6.2)
 ```
 - **One objective for every training variant** (plan §6.2):
 
-  | | β = 0 | β > 0 |
-  |---|---|---|
-  | α = 0 | one-hot (rows 0–1) | one-hot + risk |
-  | α > 0 | F1-weighted targets | F1-weighted targets + risk |
+  | | β = 0 | 0 < β < 1 | β = 1 |
+  |---|---|---|---|
+  | α = 0 | one-hot (rows 0–1) | one-hot + risk | risk loss alone |
+  | α > 0 | F1-weighted targets | F1-weighted targets + risk | raises: α unused |
+
+- **β is a share, not an added weight** (changed 26 Oct 2026). Until then the key was `risk_weight` and ℒ = ℒ_soft + β_old · ℒ_risk, which reaches the risk loss alone only as β_old → ∞. The old objective is (1 + β_old) times the mix at β = β_old / (1 + β_old), so the E1 runs with β_old ∈ {0.3, 1, 3} correspond to β ∈ {0.23, 0.5, 0.75}; `predict.run_config` converts their configs. They match only up to the loss scale: AdamW's update barely changes with a constant loss scale (only through ε), but gradient clipping (`train.grad_clip`) acts on the scaled gradients, so a rerun at the converted β is close, not identical.
+- **The risk loss alone (β = 1) may not train from scratch.** Its gradient for a span is p(y) · (ℓ(y) − E_p[ℓ]), so it is weak while p is spread over thousands of spans and vanishes once p settles on any one span, right or wrong; minimum-risk training (Shen et al., 2016) starts from a model trained with cross-entropy. In the CPU test that trains each objective on a tiny encoder (24 questions, 10 epochs, lr 1e-3, no-answer on), the risk loss alone stayed at 0.97 while every other objective fell by more than 20%. The compound head keeps its auxiliary start/end term at β = 1.
 
 - **The risk term's EM weight γ_r** (`risk_em_weight`, default 0 = F1 only; decided 16 Oct 2026, #49). On questions whose answer is uncertain, the risk loss alone puts all mass on the answer MBR would choose under the same utility, so a reader trained with it and decoded with MAP aims at MBR with utility F1 + γ_r · EM. In E1, set γ_r to the γ (`mbr_em_weight`) of the MBR cell it is compared with, so both routes target the same answer; the two keys stay separate.
   - It does not count EM twice. The (1 − α) part of ℒ_soft, −log p(gold), is the log form of the expected EM loss 1 − p(gold); it makes p estimate the posterior and leaves the decision alone. The linear EM term inside ℒ_risk moves probability toward exact matches, as the risk loss does for F1.
   - The linear term's gradient is weak while p(gold) is small, but ℒ_soft carries training then.
-  - ℓ_EM is the EM of `loss_utility`: under `normalized` a boundary variant has ℓ_EM = 0. Per question, the optimum of ℒ becomes p(y) = t(y) / (c + β · (ℓ_F1(y, y*) + γ_r · ℓ_EM(y, y*))), so γ_r adds the same penalty to every span that is not an exact match.
+  - ℓ_EM is the EM of `loss_utility`: under `normalized` a boundary variant has ℓ_EM = 0. Per question and for β < 1, the optimum of ℒ becomes p(y) = (1 − β) · t(y) / (c + β · (ℓ_F1(y, y*) + γ_r · ℓ_EM(y, y*))), so γ_r adds the same penalty to every span that is not an exact match.
 - **The risk term needs no floor.** It weights spans by p, not by how many overlap the gold; spans with F1 = 0 count as full loss, which is right there.
 - `α` is the proposal's F1:EM loss ratio: the exact-match (one-hot) and F1-weighted parts are mixed `(1 − α) : α` (`f1_target_weight`).
 - `τ` (`f1_target_temperature`) sets how evenly the F1 credit is spread; `φ` (`f1_target_floor`) sets which spans get any. φ = 0 credits every overlapping span.
@@ -342,6 +348,7 @@ risk = (logp.exp() * torch.where(valid, span_loss, torch.zeros_like(span_loss)))
 - **Loss:** listwise. Softmax over a question's candidate scores; F1-soft target over the candidates (same α, τ, φ form and the same `loss_utility` as §4.3); cross-entropy.
 - **Unanswerable negatives** (`unanswerable_negatives: true`, row 5): append a null candidate with a fixed score of 0 to every training question's list. Answerable questions give it target 0; the unanswerable questions of §3.6 put all target mass on it. Inference never adds the null candidate.
 - Track **top-k recall** (fraction of questions whose gold span is among the candidates). It caps verifier accuracy.
+  - `squadqa.candidates` reports it two ways: `recall@k`, the annotated span by position, as worded here, and `recall_em@k`, some candidate with EM 1 under `loss_utility`, so boundary variants count. A reader trained with `target_unit: group` often ranks a variant first, so they differ most at k = 1: row 1 seed 0 gave 0.667 vs 0.760 @1 and 0.920 vs 0.939 @5 (#66). `squadqa.report`'s top-k recall uses the official scorer, which also accepts the same text elsewhere (0.767 / 0.937).
 
 ### 5.2 Cross-fitting (K = 3, E2 ablation only)
 Not the default: the default candidates are sampled from the final reader (§5.1). Run on base.
@@ -493,6 +500,7 @@ out = flex_attention(q_c, k_c, v, score_mod=score_mod,
 - **Tokenizer:** DeBERTa-v3's fast tokenizer provides character offsets; the offset round-trip test (below) must pass before training.
 - **Offset round-trip test:** for every training question, `context[answer_start : answer_start + len(text)] == text` (true for all rows in the official files), and the word span built from §3.2–3.3 maps back to identical text, except for the 265 logged misaligned answers.
 - **Slurm:** checkpoint every N steps; resume automatically; default GPU jobs run at most 3 hours.
+- **Continuing a finished run** (`continue_from`): the new run starts from the source run's checkpoint (model, optimizer state and step) and follows its own schedule from that step, so `train.epochs: 3` after a 2-epoch run trains epoch 3 at the learning rate a 3-epoch schedule has there, decaying to 0. Only `train.epochs` may differ from the source's config, and the seed must match. Its first epochs followed the shorter schedule, so it is not a run trained for the longer schedule from the start; report it as a continuation.
 - **Runs:** save config, git commit hash, and seed with every run under `results/<run_id>/`.
 
 ---

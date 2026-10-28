@@ -481,14 +481,16 @@ def check_head_config(cfg: dict) -> None:
     if cfg["target_unit"] == "group" and (cfg["loss_utility"] != "normalized" or cfg["span_head"] not in BILINEAR):
         raise ValueError("target_unit group pools boundary variants: it needs loss_utility normalized and a "
                          f"span softmax, span_head in {BILINEAR}")
-    if cfg["risk_em_weight"] < 0 or (cfg["risk_em_weight"] and not cfg["risk_weight"]):
+    if cfg["risk_em_weight"] < 0 or (cfg["risk_em_weight"] and not cfg["risk_share"]):
         raise ValueError("risk_em_weight is the EM weight inside the risk loss: it must be >= 0, "
-                         "and above 0 only with risk_weight > 0")
+                         "and above 0 only with risk_share > 0")
     alpha, tau, floor, beta = (cfg["f1_target_weight"], cfg["f1_target_temperature"], cfg["f1_target_floor"],
-                               cfg["risk_weight"])
-    if not (0 <= alpha <= 1 and tau > 0 and 0 <= floor <= 1 and beta >= 0):
+                               cfg["risk_share"])
+    if not (0 <= alpha <= 1 and tau > 0 and 0 <= floor <= 1 and 0 <= beta <= 1):
         raise ValueError("need 0 <= f1_target_weight <= 1, f1_target_temperature > 0, 0 <= f1_target_floor <= 1 "
-                         "and risk_weight >= 0")
+                         "and 0 <= risk_share <= 1")
+    if alpha and beta == 1:
+        raise ValueError("risk_share 1 is the risk loss alone, so f1_target_weight would be unused: set it to 0")
     if (alpha or beta) and cfg["span_head"] not in BILINEAR:
         raise ValueError(f"F1-weighted targets and the risk loss need a span softmax: span_head in {BILINEAR}")
     if cfg["span_head"] in BILINEAR and cfg["W_init"] != "zeros":
@@ -516,7 +518,7 @@ class Reader(nn.Module):
         self.aux_weight = cfg["aux_independent_weight"]
         self.target_unit = cfg["target_unit"]
         self.alpha, self.tau, self.floor = cfg["f1_target_weight"], cfg["f1_target_temperature"], cfg["f1_target_floor"]
-        self.beta, self.risk_em_weight, self.loss_utility = cfg["risk_weight"], cfg["risk_em_weight"], cfg["loss_utility"]
+        self.beta, self.risk_em_weight, self.loss_utility = cfg["risk_share"], cfg["risk_em_weight"], cfg["loss_utility"]
         self.stats: dict[str, float] = {}               # the last batch's training checks, for the log
         args = (encoder.config.hidden_size, cfg["head_dim"], cfg["max_answer_words"], cfg["train"]["head_dropout"])
         if self.kind == "standard":
@@ -544,16 +546,19 @@ class Reader(nn.Module):
             return independent_nll(out, batch, n_examples)
         if self.kind == "conditional":
             return self.head.loss(out, batch, n_examples)
-        joint = (group_nll if self.target_unit == "group" else joint_nll)(out, batch, n_examples)
-        if self.alpha or self.beta:                     # spec §4.3: ℒ = ℒ_soft + β · ℒ_risk on the joint term
-            counted = batch["content"] if self.loss_utility == "normalized" else batch["word_mask"]
+        # spec §4.3: ℒ = (1 − β) · ℒ_soft + β · ℒ_risk on the joint term; β = 1 is the risk loss alone
+        counted = batch["content"] if self.loss_utility == "normalized" else batch["word_mask"]
+        joint = 0.0
+        if self.beta < 1:
+            joint = (group_nll if self.target_unit == "group" else joint_nll)(out, batch, n_examples)
             if self.alpha:
                 f1_part, expected_f1 = f1_target_nll(out, batch, n_examples, self.tau, self.floor,
                                                      self.target_unit, counted)
                 joint = (1 - self.alpha) * joint + self.alpha * f1_part
                 self.stats["t_f1_expected_f1"] = float(expected_f1.mean())
-            if self.beta:
-                joint = joint + self.beta * risk_loss(out, batch, n_examples, self.risk_em_weight, counted)
+        if self.beta:
+            joint = (1 - self.beta) * joint + self.beta * risk_loss(out, batch, n_examples, self.risk_em_weight,
+                                                                    counted)
         return joint if self.kind == "joint" else joint + self.aux_weight * independent_nll(out, batch, n_examples)
 
     def span_scores(self, batch: dict) -> tuple[torch.Tensor, torch.Tensor | None]:

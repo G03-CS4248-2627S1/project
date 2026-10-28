@@ -1,7 +1,9 @@
 import copy
+import json
 
 import numpy as np
 import pytest
+import yaml
 
 torch = pytest.importorskip("torch")
 transformers = pytest.importorskip("transformers")
@@ -189,6 +191,53 @@ def test_a_run_resumed_at_an_epoch_end_repeats_its_hooks(small_train, tok, tmp_p
     assert logs[0] == "resumed from step 6" and seen == [1, 1] and out["steps"] == 12
     assert torch.load(tmp_path / "model_epoch1.pt", weights_only=False)["step"] == 6
     assert not (tmp_path / "model_epoch2.pt").exists()
+
+
+# Continuing a finished run with a longer schedule (continue_from).
+
+def epochs_cfg(n, *extra):
+    return load_config(None, ["span_head=standard", "train.head_dropout=0.0", "train.effective_batch=4",
+                              "train.lr=1e-3", f"train.epochs={n}", *extra])
+
+
+def test_continue_from_takes_the_runs_state_and_this_schedule(small_train, tok, tmp_path):
+    source, out = run(small_train, tok, tmp_path / "two.pt", epochs_cfg(2, "train.checkpoint_every=1000"))
+    assert out["steps"] == 12                             # 6 steps an epoch
+    cfg = epochs_cfg(3, "train.checkpoint_every=1")
+    model, logs, seen = H.Reader(tiny_encoder(seed=5), cfg), [], []
+    fresh_gap = max((a - b).abs().max().item() for a, b in zip(source.parameters(), model.parameters()))
+    out = T.train(model, small_train, cfg, 0, tok.pad_token_id, tmp_path / "three.pt", 2, "cpu", stop_after=13,
+                  log=logs.append, on_epoch_end=seen.append, continue_from=tmp_path / "two.pt")
+    # 18 steps, 1 of warmup: step 12 is at (18 - 12) / 17 of the peak, where the 2-epoch schedule had 0
+    assert logs[0] == f"continued from step 12 of {tmp_path.name} at lr {1e-3 * 6 / 17:.2e}"
+    assert logs[1].startswith("step 13/18 ") and logs[1].split(" lr ")[1].startswith(f"{1e-3 * 5 / 17:.2e} ")
+    assert out["stopped_early"] and len(out["losses"]) == 1 and seen == []   # epoch 2's model was the source's
+    gap = max((a - b).abs().max().item() for a, b in zip(source.parameters(), model.parameters()))
+    assert gap < 0.1 * fresh_gap                          # one small step from the source's weights
+    logs = []
+    out = T.train(H.Reader(tiny_encoder(seed=5), cfg), small_train, cfg, 0, tok.pad_token_id, tmp_path / "three.pt",
+                  2, "cpu", log=logs.append, continue_from=tmp_path / "two.pt")
+    assert logs[0] == "resumed from step 13" and out["steps"] == 18          # its own checkpoint wins
+    with pytest.raises(ValueError, match="ends at 12"):
+        run(small_train, tok, tmp_path / "again.pt", epochs_cfg(2), continue_from=tmp_path / "two.pt")
+
+
+def test_continue_from_needs_the_same_config_and_seed(tmp_path, monkeypatch):
+    monkeypatch.setattr(P, "RESULTS", tmp_path)
+    monkeypatch.setenv("SQUADQA_SCRATCH", str(tmp_path / "scratch"))
+    (tmp_path / "two").mkdir()
+    (tmp_path / "two" / "config.yaml").write_text(yaml.safe_dump(load_config(None, ["train.epochs=2"])), encoding="utf-8")
+    (tmp_path / "two" / "run.json").write_text(json.dumps({"seed": 0}), encoding="utf-8")
+    assert T.continuation_source(load_config(None, []), 0) is None
+    three = load_config(None, ["train.epochs=3", "continue_from=two"])
+    assert T.continuation_source(three, 0) == tmp_path / "scratch" / "runs" / "two" / T.CHECKPOINT
+    with pytest.raises(ValueError, match="seed 0"):
+        T.continuation_source(three, 1)
+    with pytest.raises(ValueError, match=r"\['span_head', 'train\.lr'\]"):
+        T.continuation_source(load_config(None, ["train.epochs=3", "train.lr=1e-5", "span_head=standard",
+                                                 "continue_from=two"]), 0)
+    with pytest.raises(ValueError, match="must be more"):
+        T.continuation_source(load_config(None, ["train.epochs=2", "continue_from=two"]), 0)
 
 
 def test_predict_split_can_skip_candidates(tok, tmp_path):

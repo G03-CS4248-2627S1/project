@@ -20,6 +20,13 @@
 #   soc.sh submit --gpus=flexible --time=01:30:00 --export=ALL,EXPERIMENT=row1-joint,SEED=<0|1|2> \
 #     slurm/train_reader.sbatch --per-device-batch 8 --eval-each-epoch --save-each-epoch
 #   --save-each-epoch keeps the epoch-1 model next to the checkpoint, as model_epoch1.pt (about 1.7 GB).
+# A third epoch, continued from each seed's 2-epoch run (2026-10-23, continue_from in base.yaml): epoch 3
+# starts at the learning rate a 3-epoch schedule has at step 4,974 (2e-5 x 2,487 / 6,715 = 7.4e-6), decaying to 0:
+#   soc.sh submit --gpus=flexible --time=00:45:00 --export=ALL,EXPERIMENT=row1-joint,TAG=cont3,SEED=<s> \
+#     slurm/train_reader.sbatch --per-device-batch 8 --set train.epochs=3 --set continue_from=<run id>
+#   run ids: s0 2026-10-23-row1-joint-s0-j998373, s1 2026-10-23-row1-joint-s1-j998384, s2 2026-10-23-row1-joint-s2-j998397
+#   Outcome (jobs 1001209, 1001274, 1001301): worse than stopping at 2 epochs on every seed, MAP 76.44 / 89.22 vs
+#   76.97 / 89.46, EM + F1 -0.77 [-1.13, -0.40] (MBR -0.79 [-1.16, -0.43]); T 1.29 -> 1.43. Row 1 stays at 2 epochs.
 span_head: joint
 bilinear_form: full
 bilinear_pos: none
@@ -27,6 +34,6 @@ length_bias: false
 no_answer: false
 target_unit: group
 f1_target_weight: 0.0
-risk_weight: 0.0
+risk_share: 0.0
 train:
   epochs: 2

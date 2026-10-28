@@ -146,6 +146,16 @@ def test_write_json_is_ascii_and_rejects_nan(tmp_path):
         C.write_json(p, {"f1": float("nan")})
 
 
+def test_write_json_creates_folders_and_writes_compact(tmp_path):
+    """Job 1008579 failed after scoring because its output folder didn't exist."""
+    data = {"q1": {"spans": [[0, 1], [2, 3]], "f1": [1.0, None]}}
+    C.write_json(tmp_path / "a" / "b" / "pretty.json", data)
+    C.write_json(tmp_path / "c" / "compact.json", data, compact=True)
+    pretty, compact = (tmp_path / "a" / "b" / "pretty.json").read_bytes(), (tmp_path / "c" / "compact.json").read_bytes()
+    assert json.loads(pretty) == json.loads(compact) == data
+    assert compact.count(b"\n") == 1 and b" " not in compact and len(compact) < len(pretty)
+
+
 def test_add_run_args():
     import argparse
     parser = argparse.ArgumentParser()

@@ -1,0 +1,18 @@
+{
+  "split": "validation",
+  "questions": 7708,
+  "temperature": 0.7200837746273215,
+  "nll": 1.0624725524841179,
+  "nll_at_1": 1.3529539366965075,
+  "calibration_unit": "group",
+  "ece_map": 0.058250231889309736,
+  "ece_bins": 10,
+  "mean_confidence_map": 0.8006673154193599,
+  "accuracy_map": 0.7649195640892579,
+  "topk_recall": {
+    "1": 0.7640114167099118,
+    "5": 0.9302023871302543,
+    "10": 0.9518681888946549
+  },
+  "map_rebuilt_differs": 0
+}

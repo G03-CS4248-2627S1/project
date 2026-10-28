@@ -26,10 +26,11 @@ f1_target_weight: 0.0                  # α, the F1:EM loss ratio (§4.3); 0 = o
 f1_target_temperature: 0.1             # τ: how evenly the F1 credit is spread
 f1_target_floor: 0.5                   # φ: spans with F1 < φ get no F1 credit; 0 = every overlapping span
 target_unit: span                      # span = targets per span (t_EM on the annotated span) | group = per group of boundary variants, so both parts count the gold answer once (§4.3; needs loss_utility normalized and a joint or compound head, so the default stays span for row 0); ladder row 1 sets group in its config
-risk_weight: 0.0                       # β: weight of the expected-F1 (risk) loss added to the target loss (§4.3); 0 = none
+risk_share: 0.0                        # β: share of the expected-F1 (risk) loss, ℒ = (1 − β) · ℒ_soft + β · ℒ_risk (§4.3); 0 = none, 1 = risk loss alone
 risk_em_weight: 0.0                    # γ_r: weight of the EM loss inside the risk term, ℒ_risk = Σ p · (ℓ_F1 + γ_r · ℓ_EM) (§4.3); 0 = F1 only. Separate from the decoding γ
 calibration: temperature               # one T, fit on validation split
 extra_train_data: []                   # row 5: [adversarialqa]; augmentation (P2) adds augmented
+continue_from: null                    # a run id: start from that run's checkpoint and follow this config's schedule from its step, e.g. train.epochs 3 after a 2-epoch run; only the epochs may differ (§9)
 train:                                 # reader fine-tuning: the plan's sandbox recipe (plan §15.1); lr and epochs tuned in row 0 (plan §15.3)
   lr: 2.0e-5                           # write floats with a dot: YAML reads 2e-5 as a string
   epochs: 1
@@ -46,6 +47,8 @@ verifier:
   shared_option: B                     # levitated_shared only (P3): A = fully shared multi-task, B = frozen reader + marker-only LoRA
   lora: {rank: 16, alpha: 32, targets: [query_proj, key_proj, value_proj]}   # shared_lora and option B; check module names in the installed HF version
   k_infer: 5
+  k_train: 8                           # spans sampled per training question, before the gold and its boundary variants are added (squadqa.candidates; #66): lists of 10.4 on average
+  sample_temperature: 2.0              # divides the reader's raw span scores when sampling training candidates, above 1 so the lists hold more than the reader's favourites; one value, checked on validation (#66, 24 Oct): before the gold is added, the samples hold an EM-1 span 93.9% of the time, as the validation top-5 does (93.9%), so the sampled distractors are about as hard as the reader's real mistakes; other values not tried
   k_sweep: [5, 10, 20, 30]             # levitated variants only (P3)
   train_candidates: sampled            # sampled = drawn from the final reader's own span distribution (plan §4.3) | crossfit (E2 ablation)
   crossfit_folds: 3                    # crossfit ablation only, on base
