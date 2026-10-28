@@ -2,7 +2,7 @@
 
 Implementation spec for coding agents and team members.
 
-- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v1.12). **How:** this file. **When:** [timeline.md](timeline.md). **How we work:** [workflow.md](workflow.md).
+- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v2.0). **How:** this file. **When:** [timeline.md](timeline.md). **How we work:** [workflow.md](workflow.md).
 - Week labels such as W2 or W5+ are plan weeks: W1–W7 are course weeks 7–13.
 - If this file and the plan disagree, stop and ask a human.
 
@@ -73,6 +73,7 @@ verifier:
   k_infer: 5
   k_train: 8                           # spans sampled per training question, before the gold and its boundary variants are added (squadqa.candidates; #66): lists of 10.4 on average
   sample_temperature: 2.0              # divides the reader's raw span scores when sampling training candidates, above 1 so the lists hold more than the reader's favourites; one value, checked on validation (#66, 24 Oct): before the gold is added, the samples hold an EM-1 span 93.9% of the time, as the validation top-5 does (93.9%), so the sampled distractors are about as hard as the reader's real mistakes; other values not tried
+  list_unit: span                      # span = one candidate per span, the gold's boundary variants added | group = one per group of boundary variants (same content core; p summed; k_train and k_infer count groups; no variants added): the verifier picks among answers and leaves boundaries to the reader
   k_sweep: [5, 10, 20, 30]             # levitated variants only (P3)
   train_candidates: sampled            # sampled = drawn from the final reader's own span distribution (plan §4.3) | crossfit (E2 ablation)
   crossfit_folds: 3                    # crossfit ablation only, on base
@@ -150,8 +151,8 @@ def word_spans(text: str) -> list[tuple[int, int]]:
   - drop each question whose article title is in the validation split (`squadqa.splits.load_val_titles()`);
   - raise an error if any passage matches a dev-v1.1 passage (whitespace-normalized).
   - Measured 2026-10-03 (plan §15.2): 4,899 SQuAD 2.0 and 2,596 AdversarialQA training questions sit on validation articles; none sit on dev passages.
-- **AdversarialQA** (`data/external/adversarialqa/train.json`, the combined split): extra reader training data when `extra_train_data` contains `adversarialqa`. Same format as SQuAD, one answer per question. `adversarialqa/dev.json` is built on dev-v1.1 passages, so never train or tune on it (rule 1).
-- **SQuAD 2.0 unanswerable questions** (`data/external/squad2/train-v2.0.json`): after duplicate removal this file holds only the unanswerable questions, all on train-v1.1 passages. They are verifier negatives when `unanswerable_negatives: true` (§5.1). Their candidates are the reader's top-k plus each `plausible_answers` span, located with its `answer_start` (rule 4) and converted to word spans (§3.2). Drop plausible answers that are not word-aligned.
+- **AdversarialQA** (`data/external/adversarialqa/train.json`, the combined split): extra reader training data when `extra_train_data` contains `adversarialqa`, or verifier-only training lists (§5.1, `--source adversarialqa`). Same format as SQuAD, one answer per question. `adversarialqa/dev.json` is built on dev-v1.1 passages, so never train or tune on it (rule 1).
+- **SQuAD 2.0 unanswerable questions** (`data/external/squad2/train-v2.0.json`): after duplicate removal this file holds only the unanswerable questions, all on train-v1.1 passages. They are verifier negatives when `unanswerable_negatives: true` (§5.1). Their candidates are sampled from the reader as for answerable training questions (§5.1, so the two kinds of list are built alike) plus each `plausible_answers` span, located with its `answer_start` (rule 4) and converted to word spans (§3.2). Drop plausible answers that are not word-aligned.
 - **Augmentation (P2):** each rule (letter case, date format, name substitution) edits the passage, question and answer together, and carries `answer_start` through the edit by offset arithmetic, never by search (rule 4). The offset round-trip test (§9) must pass on the augmented set. Never augment validation articles or anything from dev-v1.1 (rules 1–2).
 
 ### 3.7 Multi-answer data for E6 (plan §7.2, §8)
@@ -345,6 +346,9 @@ risk = (logp.exp() * torch.where(valid, span_loss, torch.zeros_like(span_loss)))
 ### 5.1 Candidates and targets
 - **Training:** spans sampled from the final reader's span distribution on its own training questions, at a temperature above 1 tuned on the validation split (plan §4.3). For the E2 ablation, use the cross-fitted readers' top-k on the held-out fold (§5.2) instead. In both cases add the gold span if missing, plus boundary variants (±1 word at either end, valid only), plus siblings (§3.5) if `sibling_negatives: true`. Deduplicate.
 - **Inference:** the reader's top-k.
+- **Group lists** (`list_unit: group`): every candidate is a group of boundary variants, the valid spans with one content core (first to last content word; a span with no content word is its own group), as in `target_unit: group`. Its probability is the sum over all its spans, its span is its most probable member, and `k_train` / `k_infer` count groups: training samples k distinct groups from the groups' tempered probabilities and adds the gold's group, with no boundary variants (they are in it). The verifier then chooses among answers, and the reader keeps the boundaries.
+- **Other sources** (training lists only, `squadqa.candidates --source`): AdversarialQA train, which the reader never saw, as for SQuAD; and the unanswerable questions of §3.6, sampled the same way (so their lists are built like the answerable ones) plus the plausible answer when it is a valid span, with no gold.
+- **Labels** on every candidate, against the reference (the gold, or the plausible answer of an unanswerable question), all between content cores so that every member of a group gets the same values: `f1`, `em`, `precision`, `recall` (`loss_utility`); `relation` (`same`, `inside`, `contains`, `crosses`, `disjoint`); `kind` (`correct` = EM 1, `boundary` = F1 > 0, `wrong` = F1 0); `start_shift`, `end_shift` (candidate core minus reference core, in words); `gap` (words between disjoint cores); `official_f1`, `official_em` (the official scorer on the texts: analysis only, never a target, because it accepts the same text elsewhere, rule 4); `sibling` (the core is the gold core of one of the reader's training questions on the same passage: a memorised answer). Each list also records the reader's own top-1 with the same labels.
 - **Loss:** listwise. Softmax over a question's candidate scores; F1-soft target over the candidates (same α, τ, φ form and the same `loss_utility` as §4.3); cross-entropy.
 - **Unanswerable negatives** (`unanswerable_negatives: true`, row 5): append a null candidate with a fixed score of 0 to every training question's list. Answerable questions give it target 0; the unanswerable questions of §3.6 put all target mass on it. Inference never adds the null candidate.
 - Track **top-k recall** (fraction of questions whose gold span is among the candidates). It caps verifier accuracy.

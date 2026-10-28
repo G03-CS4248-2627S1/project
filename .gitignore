@@ -8,8 +8,10 @@ local/
 CLAUDE.local.md
 .claude/settings.local.json
 
-# Downloaded datasets (re-created by a download script); generated data elsewhere in data/ is committed
+# Downloaded datasets (re-created by a download script); generated data elsewhere in data/ is committed,
+# except the verifier's candidate lists (large; re-created by python -m squadqa.candidates)
 data/external/
+data/verifier/
 
 # Slurm logs (the directory itself is kept so sbatch can write into it)
 logs/*
