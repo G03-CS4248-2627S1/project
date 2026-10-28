@@ -79,6 +79,14 @@ verifier:
   crossfit_folds: 3                    # crossfit ablation only, on base
   sibling_negatives: false             # P2 ablation (§3.5)
   unanswerable_negatives: false        # row 5: SQuAD 2.0 unanswerable questions with a null candidate (§5.1)
+  train:                               # squadqa.train_verifier (#67); provisional, tuned on base (plan §16: lr, LoRA rank, λ)
+    lr: 1.0e-4                         # LoRA, markers and head; the frozen reader has none
+    epochs: 1
+    warmup_frac: 0.1
+    weight_decay: 0.01
+    effective_batch: 16                # questions per optimizer step (all their candidates)
+    grad_clip: 1.0
+    checkpoint_every: 500
 seeds: [0, 1, 2]
 ```
 
@@ -363,15 +371,17 @@ Not the default: the default candidates are sampled from the final reader (§5.1
 4. At test time use the reader trained on all non-validation training articles.
 
 ### 5.3 In-place markers (both variants)
-- Insert the marker strings `<a>` and `</a>` into the passage text around the candidate's characters, with a space on each side, then tokenize. Register them as special tokens in each variant's tokenizer and resize its embeddings. Inserting text before tokenizing works with both tokenizers.
+- Insert the marker strings `<a>` and `</a>` into the passage text around the candidate's characters, with a space on each side, then tokenize. Register them as special tokens in each variant's tokenizer and resize its embeddings. Inserting text before tokenizing works with both tokenizers (`squadqa/verifier.py`; test V5 checks both).
+  - **Never shrink the embeddings.** DeBERTa-v3's matrix has 128,100 rows but its tokenizer only 128,001 entries, so with the markers `len(tokenizer)` is 128,003 and `resize_token_embeddings(len(tokenizer))` would cut the reader's matrix (checked 2026-10-23). Use `squadqa.verifier.resize_for_markers`, which only grows it; for DeBERTa-v3 it adds nothing, since the markers take spare rows.
 - Input: the question and the passage. Most passages fit one window. Otherwise keep the window (§3.4, reader tokenizer) in which the candidate is most central, as a character range, and give both variants that same range, so E2 compares backbones on identical text.
 - Head: concatenate hidden states at `<a>`, `</a>` and the first token (`[CLS]`) → MLP → one score.
 - One forward pass per candidate.
 
 ### 5.4 Variants (E2)
 - **`shared_lora`:** load the frozen final reader and add PEFT LoRA (`verifier.lora`) to its encoder.
-  - Reader passes run with the adapter disabled (`with model.disable_adapter():`); verifier passes run with it enabled.
+  - Reader passes run with the adapter disabled (`with model.disable_adapter():`); verifier passes run with it enabled. Built as `squadqa.verifier.SharedLoraVerifier`: LoRA is injected into the reader's encoder in place (`peft.inject_adapter_in_model`), so the reader keeps its structure, and `verifier.adapters(encoder, False)` switches it off (off reproduces the reader exactly, `torch.equal`).
   - Train only the LoRA weights, the two marker embeddings and the verifier head. Keep the existing embedding rows frozen, so the reader is unchanged (test V4).
+    - The marker embeddings are their own 2-row parameter, written over the word embeddings at the marker ids. Training two rows of the table by masking its gradient would move every row, because AdamW's weight decay ignores a zero gradient (checked 2026-10-23).
 - **`separate`:** `verifier.separate_model` (ModernBERT-large), fully fine-tuned with its own tokenizer.
   - Pinned in `MODELS` in `squadqa/download_model.py` (base and large); load it with an explicit dtype (§9).
   - Smoke-test it like any new training script (§9).
