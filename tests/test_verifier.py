@@ -182,14 +182,11 @@ def tiny_reader(seed=0):
     return reader.eval()
 
 
-@pytest.fixture(scope="module")
-def marked(reader_tok):
-    """A reader batch for 4 validation questions, and a marked batch of each one's gold span and
-    the span one word longer: 8 candidates, 2 per question, the gold first."""
-    open_id, close_id = V.add_markers(reader_tok)
+def _four_marked(reader_tok, enc_tok, open_id, close_id):
+    """4 validation questions featurized with the reader's tokenizer, and each one's gold span and
+    the span one word longer, marked in the reader's windows and encoded with enc_tok."""
     qs = D.load_split("validation")[:4]
     feats = D.featurize(qs, reader_tok, V_CFG, training=False)
-    reader_batch = D.collate(feats.batch(list(range(len(qs)))), reader_tok.pad_token_id)
     layout = D.pair_layout(reader_tok)
     encs, question = [], []
     for k, ex in enumerate(feats.examples):
@@ -200,10 +197,19 @@ def marked(reader_tok):
         for a, b in ((i, j), (i, j + 1)):
             lo, hi = V.candidate_window(windows, ex.context, a, b)
             m = V.mark(ex.question.context, ex.context.words, a, b, lo, hi)
-            encs.append(V.encode(reader_tok, ex.question.question, m, open_id, close_id))
+            encs.append(V.encode(enc_tok, ex.question.question, m, open_id, close_id))
             question.append(k)
-    batch = V.collate_marked(encs, reader_tok.pad_token_id)
-    return open_id, close_id, reader_batch, batch, torch.tensor(question)
+    return feats, V.collate_marked(encs, enc_tok.pad_token_id), torch.tensor(question)
+
+
+@pytest.fixture(scope="module")
+def marked(reader_tok):
+    """A reader batch for 4 validation questions, and a marked batch of each one's gold span and
+    the span one word longer: 8 candidates, 2 per question, the gold first."""
+    open_id, close_id = V.add_markers(reader_tok)
+    feats, batch, question = _four_marked(reader_tok, reader_tok, open_id, close_id)
+    reader_batch = D.collate(feats.batch(list(range(len(feats.examples)))), reader_tok.pad_token_id)
+    return open_id, close_id, reader_batch, batch, question
 
 
 def _train(v, batch, question, steps=5):
@@ -295,6 +301,123 @@ def test_the_verifier_refuses_bad_setups(marked):
         V.SharedLoraVerifier(tiny_reader(), open_id, close_id, {**V_CFG, "verifier": bad["verifier"]})
     with pytest.raises(ValueError, match="outside the embedding table"):
         V.SharedLoraVerifier(tiny_reader(), 128100, 128101, V_CFG)
+
+
+# The separate verifier (spec §5.4) on a tiny random ModernBERT with ModernBERT's own tokenizer, CPU only.
+
+def tiny_modernbert(seed=0):
+    torch.manual_seed(seed)
+    config = transformers.ModernBertConfig(
+        vocab_size=50368, hidden_size=32, intermediate_size=64, num_hidden_layers=3, num_attention_heads=2,
+        global_attn_every_n_layers=3, local_attention=8, pad_token_id=50283,
+        embedding_dropout=0.0, attention_dropout=0.0, mlp_dropout=0.0)
+    return transformers.AutoModel.from_config(config, attn_implementation=V.ATTENTION)
+
+
+@pytest.fixture(scope="module")
+def separate_marked(reader_tok):
+    """ModernBERT's tokenizer with the markers, and the 4 questions' 8 candidates marked in the
+    reader's windows and encoded with it."""
+    try:
+        tok = D.load_tokenizer(CFG["verifier"]["separate_model"])
+    except (OSError, RuntimeError) as e:
+        pytest.skip(f"tokenizer not available: {e}")
+    open_id, close_id = V.add_markers(tok)
+    _, batch, question = _four_marked(reader_tok, tok, open_id, close_id)
+    return tok, open_id, close_id, batch, question
+
+
+def _separate(tok, open_id, close_id, seed=0):
+    enc = tiny_modernbert(seed)
+    assert V.resize_for_markers(enc, tok) == 2                          # no spare rows: 50,368 of each
+    return V.SeparateVerifier(enc, open_id, close_id, V_CFG)
+
+
+def test_separate_markers_are_new_rows_at_the_table_mean(separate_marked):
+    tok, open_id, close_id, *_ = separate_marked
+    assert (open_id, close_id) == (50368, 50369)
+    enc = tiny_modernbert()
+    pretrained = enc.get_input_embeddings().weight.detach().clone()
+    V.resize_for_markers(enc, tok)
+    v = V.SeparateVerifier(enc, open_id, close_id, V_CFG)
+    table = v.encoder.get_input_embeddings().weight
+    assert table.shape[0] == 50370 and torch.equal(table[:50368], pretrained)
+    assert torch.allclose(table[open_id], pretrained.mean(0), atol=1e-6) and torch.equal(table[open_id], table[close_id])
+
+
+def test_separate_trains_every_weight_markers_included(separate_marked):
+    tok, open_id, close_id, batch, question = separate_marked
+    v = _separate(tok, open_id, close_id)
+    assert len(v.trainable_parameters()) == len(list(v.parameters()))
+    table = v.encoder.get_input_embeddings().weight
+    before_markers, before_word = table[[open_id, close_id]].detach().clone(), table[100].detach().clone()
+    with torch.no_grad():
+        scores0 = v(batch).clone()
+    _train(v, batch, question)
+    with torch.no_grad():
+        assert not torch.allclose(v(batch), scores0)
+    assert not torch.equal(table[[open_id, close_id]], before_markers)  # the markers learn
+    assert not torch.equal(table[open_id], table[close_id])
+    assert not torch.equal(table[100], before_word)                     # and so does the rest
+
+
+def test_separate_refuses_markers_outside_its_table(separate_marked):
+    _, open_id, close_id, *_ = separate_marked
+    with pytest.raises(ValueError, match="outside the embedding table"):
+        V.SeparateVerifier(tiny_modernbert(), open_id, close_id, V_CFG)  # not resized
+
+
+@pytest.mark.parametrize("variant", ["shared_lora", "separate"])
+def test_a_candidate_scores_the_same_alone_and_padded_in_a_batch(variant, marked, separate_marked):
+    """Right padding changes no score (both encoders mask it), so the batch size is not a setting."""
+    if variant == "shared_lora":
+        open_id, close_id, _, batch, question = marked
+        v = V.SharedLoraVerifier(tiny_reader(), open_id, close_id, V_CFG)
+    else:
+        tok, open_id, close_id, batch, question = separate_marked
+        v = _separate(tok, open_id, close_id)
+    _train(v, batch, question, steps=2)                                 # LoRA's B and the markers away from their start
+    lengths = batch["attention_mask"].sum(1)
+    assert lengths.min() < lengths.max()                                # some candidates are padded
+    with torch.no_grad():
+        together = v(batch)
+        for b in range(len(lengths)):
+            n = int(lengths[b])
+            alone = {"input_ids": batch["input_ids"][b:b + 1, :n], "attention_mask": batch["attention_mask"][b:b + 1, :n],
+                     "open_pos": batch["open_pos"][b:b + 1], "close_pos": batch["close_pos"][b:b + 1]}
+            assert v(alone)[0].item() == pytest.approx(together[b].item(), abs=1e-5)
+
+
+def test_load_separate_encoder_is_pinned_fp32_with_sdpa(monkeypatch):
+    from squadqa.download_model import MODELS
+
+    got = {}
+    monkeypatch.setattr(transformers.AutoModel, "from_pretrained", lambda name, **kw: got.update(name=name, **kw))
+    V.load_separate_encoder("answerdotai/ModernBERT-large")
+    assert got == {"name": "answerdotai/ModernBERT-large", "revision": MODELS["answerdotai/ModernBERT-large"]["revision"],
+                   "dtype": torch.float32, "attn_implementation": "sdpa"}
+    with pytest.raises(KeyError, match="not pinned"):
+        V.load_separate_encoder("answerdotai/ModernBERT-xl")
+
+
+def test_no_decay_skips_biases_and_every_layernorm(separate_marked, marked):
+    """By module type: ModernBERT's norms (embeddings.norm, attn_norm, mlp_norm, final_norm) escape
+    train_reader's name rule; for shared_lora the two rules pick the same trainable parameters."""
+    from squadqa import train_verifier as TV
+
+    tok, open_id, close_id, *_ = separate_marked
+    v = _separate(tok, open_id, close_id)
+    names = [n for n, _ in v.named_parameters()]
+    skip = TV.no_decay(v)
+    norms = [n for n in names if "norm" in n]
+    assert len(norms) >= 6 and all(skip(n) for n in norms)
+    assert {n for n in names if skip(n)} == set(norms) | {"head.0.bias", "head.3.bias"}
+    by_name = lambda n: n.endswith("bias") or "LayerNorm" in n or "layernorm" in n
+    assert not all(by_name(n) for n in norms)                           # what the module rule fixes
+    open_id, close_id, *_ = marked
+    s = V.SharedLoraVerifier(tiny_reader(), open_id, close_id, V_CFG)
+    trainable = [n for n, p in s.named_parameters() if p.requires_grad]
+    assert [TV.no_decay(s)(n) for n in trainable] == [by_name(n) for n in trainable]
 
 
 # The listwise loss and the combination.

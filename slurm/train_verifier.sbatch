@@ -1,12 +1,14 @@
 #!/bin/bash
-# The shared_lora verifier (squadqa.train_verifier, #67) on a reader's candidate lists (squadqa.candidates).
+# A verifier (squadqa.train_verifier) on a reader's candidate lists (squadqa.candidates): shared_lora
+# (#67, the default) or separate (#68, ModernBERT):
 #   bash .claude/skills/soc-cluster/soc.sh submit slurm/train_verifier.sbatch --reader <reader run_id>
+#   soc.sh submit --export=ALL,EXPERIMENT=verifier-separate slurm/train_verifier.sbatch --reader <reader run_id>
 # Smoke run (spec §9), then the resume with the same RUN_ID and without --stop-after:
 #   soc.sh submit slurm/train_verifier.sbatch --reader <run> --max-steps 40 --stop-after 20
 #   soc.sh submit --export=ALL,RUN_ID=<run id> slurm/train_verifier.sbatch --reader <run> --max-steps 40
 # Another seed: --export=ALL,SEED=1. Settings: --set verifier.train.lr=2.0e-4 (and so on).
-# Needs results/<reader>/ (config, calibration) in the clone, the reader's checkpoint in
-# $SQUADQA_SCRATCH/runs/<reader>/ and its lists in $SQUADQA_SCRATCH/candidates/<reader>/.
+# Needs results/<reader>/ (config, calibration) and the reader's lists in data/verifier/<reader>/ in
+# the clone (or --lists DIR), and for shared_lora the reader's checkpoint in $SQUADQA_SCRATCH/runs/<reader>/.
 # Writes results/$RUN_ID/ and checkpoints to $SQUADQA_SCRATCH/runs/$RUN_ID/.
 # The log goes to logs/<job name>-<job id>.out. Partitions: gpu (up to 3 hours) or gpu-long (up to 3 days).
 #SBATCH --job-name=train_verifier
@@ -25,9 +27,10 @@ export HF_HUB_OFFLINE=1   # a missing model file raises an error instead of down
 [ "$(git rev-parse HEAD)" = "${SQUADQA_COMMIT:?Submit with soc.sh submit, which sets SQUADQA_COMMIT}" ] ||
   { echo "The clone is at $(git rev-parse --short HEAD), not the submitted ${SQUADQA_COMMIT:0:7}." >&2; exit 1; }
 
-EXPERIMENT=verifier-shared-lora
+EXPERIMENT="${EXPERIMENT:-verifier-shared-lora}"   # the file name in configs/experiments/, without .yaml
 SEED="${SEED:-0}"
-RUN_ID="${RUN_ID:-$(date +%F)-$EXPERIMENT-s$SEED-j$SLURM_JOB_ID}"
+TAG="${TAG:+-$TAG}"                                 # optional variant name for --set runs (e.g. TAG=base)
+RUN_ID="${RUN_ID:-$(date +%F)-$EXPERIMENT$TAG-s$SEED-j$SLURM_JOB_ID}"
 echo "run $RUN_ID: commit $(git rev-parse --short HEAD) on $(hostname)"
 
 python -m squadqa.train_verifier --config "configs/experiments/$EXPERIMENT.yaml" --seed "$SEED" --run-id "$RUN_ID" "$@"

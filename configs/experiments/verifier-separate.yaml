@@ -1,0 +1,12 @@
+# The separate verifier (#68, spec §5.4): verifier.separate_model (ModernBERT-large; for development
+# --set verifier.separate_model=answerdotai/ModernBERT-base), fully fine-tuned with its own tokenizer,
+# on the candidate lists of the reader named by --reader, with one-hot targets (f1_target_weight 0)
+# as in verifier-shared-lora.yaml. Only the reader's windows are used, not its weights. The learning
+# rate is provisional: every weight trains here, where shared_lora's 1e-4 is for LoRA and a new
+# head; plan §15.3 tunes it on base.
+verifier:
+  variant: separate
+  type: in_place
+  train:
+    lr: 3.0e-5
+f1_target_weight: 0.0
