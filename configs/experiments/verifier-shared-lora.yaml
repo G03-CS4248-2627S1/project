@@ -1,0 +1,9 @@
+# The shared_lora verifier (#67, spec §5.4): the frozen reader named by --reader, plus LoRA, two
+# marker embeddings and a head, trained on that reader's candidate lists (squadqa.candidates, #66)
+# with one-hot targets (f1_target_weight 0). base.yaml's verifier.train settings are provisional;
+# plan §16 tunes the learning rate, LoRA rank and λ on base (reader 1b-joint-even-plain-nonull s0)
+# before the large run on the stage-2 reader (row 1 s0, j998373).
+verifier:
+  variant: shared_lora
+  type: in_place
+f1_target_weight: 0.0

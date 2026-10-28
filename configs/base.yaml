@@ -54,4 +54,12 @@ verifier:
   crossfit_folds: 3                    # crossfit ablation only, on base
   sibling_negatives: false             # P2 ablation (§3.5)
   unanswerable_negatives: false        # row 5: SQuAD 2.0 unanswerable questions with a null candidate (§5.1)
+  train:                               # squadqa.train_verifier (#67); provisional, tuned on base (plan §16: lr, LoRA rank, λ)
+    lr: 1.0e-4                         # LoRA, markers and head; the frozen reader has none
+    epochs: 1
+    warmup_frac: 0.1
+    weight_decay: 0.01
+    effective_batch: 16                # questions per optimizer step (all their candidates)
+    grad_clip: 1.0
+    checkpoint_every: 500
 seeds: [0, 1, 2]
