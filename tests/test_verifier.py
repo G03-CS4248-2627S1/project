@@ -326,7 +326,29 @@ def test_combine_and_fit_lambda():
         useless.append((confident, rng.normal(0, 1, 5), gold))
     r, s, _ = helpful[0]
     assert V.combine(r, s, 0.0) == pytest.approx(r - np.logaddexp.reduce(r))   # λ = 0: the reader alone
-    assert V.fit_lambda(helpful) > 0.5                                  # a verifier that knows the answer counts
-    assert V.fit_lambda(useless) <= 0.2                                 # noise, against a sure reader, barely does
+    assert V.combine(r, s, 1.0, 2.0) == pytest.approx(np.log(np.exp((r + s) / 2) / np.exp((r + s) / 2).sum()))
+    assert V.fit_lambda(helpful)[0] > 0.5                               # a verifier that knows the answer counts
+    assert V.fit_lambda(useless)[0] <= 0.2                              # noise, against a sure reader, barely does
     with pytest.raises(ValueError):
         V.fit_lambda([])
+
+
+def test_fit_lambda_cools_an_overconfident_sum_instead_of_dropping_the_verifier():
+    """A reader and a verifier that are each calibrated and share most of their errors (as
+    shared_lora does): their sum is too sure, so at T = 1 the fit nearly turns the verifier off (it
+    did, λ = 0, on the 2026-10-28 base runs). Fit with T, λ grows and T settles inside its grid."""
+    rng = np.random.default_rng(0)
+    gold = np.arange(5) == 0
+    shared = [rng.normal(0, 1, 5) for _ in range(400)]                 # what both get wrong
+    reader = [2 * gold + c + rng.normal(0, 0.3, 5) for c in shared]
+    verifier = [2 * gold + c + rng.normal(0, 0.3, 5) for c in shared]
+
+    def calibrated(xs):                                                 # each alone at its best temperature
+        nll = lambda t: np.mean([np.logaddexp.reduce(x / t) - x[0] / t for x in xs])
+        t = min(np.arange(0.2, 5, 0.05), key=nll)
+        return [x / t for x in xs]
+
+    items = [(r - np.logaddexp.reduce(r), v, 0) for r, v in zip(calibrated(reader), calibrated(verifier))]
+    alone, _ = V.fit_lambda(items, temperatures=(1.0,))
+    lam, t = V.fit_lambda(items)
+    assert alone <= 0.2 and lam >= 0.5 and 1.2 < t < 3                # seeds 0-4: 0.1-0.2; 0.6-1.6 at T 1.45-2.45
