@@ -4,8 +4,9 @@
 #   bash .claude/skills/soc-cluster/soc.sh submit slurm/candidates.sbatch --run-id <reader run_id> --split train
 # Other list settings: add e.g. --set verifier.sample_temperature=1.5 (and --seed for the sampling seed).
 # The reader run needs results/<run_id>/ (config.yaml, calibration.json) in the clone and its checkpoint in
-# $SQUADQA_SCRATCH/runs/<run_id>/. Writes $SQUADQA_SCRATCH/candidates/<run_id>/candidates_<split>.json and
-# summary_<split>.json; nothing goes to results/, since the lists are large (workflow.md §2.2).
+# $SQUADQA_SCRATCH/runs/<run_id>/. Writes data/verifier/<run_id>/candidates_<split>.json and
+# summary_<split>.json in the clone (gitignored, since the lists are large); nothing goes to results/.
+# Other sources (training lists only): add --source adversarialqa or --source squad2-unanswerable.
 # Validation (7,708 questions) is one reader pass; train (79,577) about ten times that, in chunks of 4,096.
 # The log goes to logs/<job name>-<job id>.out. Partitions: gpu (up to 3 hours) or gpu-long (up to 3 days).
 #SBATCH --job-name=candidates

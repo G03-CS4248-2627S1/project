@@ -49,6 +49,7 @@ verifier:
   k_infer: 5
   k_train: 8                           # spans sampled per training question, before the gold and its boundary variants are added (squadqa.candidates; #66): lists of 10.4 on average
   sample_temperature: 2.0              # divides the reader's raw span scores when sampling training candidates, above 1 so the lists hold more than the reader's favourites; one value, checked on validation (#66, 27 Oct, reader j998373): before the gold is added, the samples hold an EM-1 span 93.9% of the time, as the validation top-5 does (93.8%), so the sampled distractors are about as hard as the reader's real mistakes; other values not tried
+  list_unit: span                      # span = one candidate per span, the gold's boundary variants added | group = one per group of boundary variants (same content core; p summed; k_train and k_infer count groups; no variants added): the verifier picks among answers and leaves boundaries to the reader
   k_sweep: [5, 10, 20, 30]             # levitated variants only (P3)
   train_candidates: sampled            # sampled = drawn from the final reader's own span distribution (plan §4.3) | crossfit (E2 ablation)
   crossfit_folds: 3                    # crossfit ablation only, on base

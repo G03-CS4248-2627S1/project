@@ -78,6 +78,37 @@ def test_group_keys():
     assert keys == [(2, 3), (2, 3), (2, 3), (-1, 4, 5), (6, 6), (-1, 1, 1)]
 
 
+def test_group_cores_group_as_group_keys_does():
+    rng = np.random.default_rng(0)
+    for _ in range(20):
+        flags = rng.random(30) < 0.6
+        s = rng.integers(0, 30, 200)
+        e = np.minimum(29, s + rng.integers(0, 6, 200))
+        keys = Dc.group_keys(flags, s, e)
+        cores = list(zip(*(c.tolist() for c in Dc.group_cores(flags, s, e))))
+        same_key = [[a == b for b in keys] for a in keys]
+        same_core = [[a == b for b in cores] for a in cores]
+        assert same_key == same_core
+    f = flags_of("Visit the Eiffel Tower . The cat")
+    cs, ce = Dc.group_cores(f, [1, 4], [3, 5])
+    assert cs.tolist() == [2, 4] and ce.tolist() == [3, 5]       # "the Eiffel Tower" → core 2–3; ". The" its own
+
+
+def test_precision_and_recall_make_f1():
+    rng = np.random.default_rng(1)
+    flags = rng.random(40) < 0.7
+    spans = [tuple(sorted(rng.integers(0, 40, 2))) for _ in range(60)]
+    s, e = np.array([a for a, _ in spans]), np.array([b for _, b in spans])
+    f1, _ = Dc.span_f1_em(flags, s[:, None], e[:, None], s[None, :], e[None, :])
+    p, r = Dc.span_precision_recall(flags, s[:, None], e[:, None], s[None, :], e[None, :])
+    with np.errstate(divide="ignore", invalid="ignore"):
+        hm = np.where(p + r > 0, 2 * p * r / (p + r), 0.0)
+    assert hm == pytest.approx(f1)
+    f = np.ones(10, bool)
+    p, r = Dc.span_precision_recall(f, [2, 3], [5, 3], 3, 4)       # too long, too short
+    assert p.tolist() == [0.5, 1.0] and r.tolist() == [1.0, 0.5]
+
+
 # One softmax per question.
 
 def window(scores, first_word, first_tok, ctx_start, ctx_end):
