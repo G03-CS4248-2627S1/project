@@ -299,21 +299,40 @@ def listwise_loss(scores: torch.Tensor, question: torch.Tensor, targets: torch.T
     return -torch.zeros(n_questions, device=scores.device, dtype=scores.dtype).index_add(0, question, contrib)
 
 
-def combine(reader_logp: np.ndarray, verifier_score: np.ndarray, lam: float) -> np.ndarray:
-    """Log-probabilities over one list from reader log-probability + λ · verifier score (timeline
-    4.2). λ = 0 is the reader alone."""
+def combine(reader_logp: np.ndarray, verifier_score: np.ndarray, lam: float,
+            temperature: float = 1.0) -> np.ndarray:
+    """Log-probabilities over one list from (reader log-probability + λ · verifier score) / T
+    (timeline 4.2: combine, softmax, recalibrate). λ = 0 and T = 1 is the reader alone."""
     from squadqa.decode import log_softmax
 
-    return log_softmax(np.asarray(reader_logp, dtype=np.float64) + lam * np.asarray(verifier_score, dtype=np.float64))
+    z = np.asarray(reader_logp, dtype=np.float64) + lam * np.asarray(verifier_score, dtype=np.float64)
+    return log_softmax(z / temperature)
 
 
 def fit_lambda(items: list[tuple[np.ndarray, np.ndarray, int | np.ndarray]],
-               grid: tuple[float, ...] = tuple(np.round(np.arange(0, 5.01, 0.1), 2))) -> float:
-    """The λ in grid (it includes 0, the reader alone) with the lowest mean NLL of the gold on the
-    validation lists that hold it: items are (reader_logp, verifier_score, gold index or the
-    indices of its group). Recalibration and decoding come after, as for the reader."""
+               grid: tuple[float, ...] = tuple(np.round(np.arange(0, 5.01, 0.1), 2)),
+               temperatures: tuple[float, ...] = tuple(np.round(np.arange(0.5, 5.01, 0.05), 2))
+               ) -> tuple[float, float]:
+    """The (λ, T) on the grids with the lowest mean NLL of the gold on the validation lists that
+    hold it: items are (reader_logp, verifier_score, gold index or the indices of its group).
+    λ = 0, T = 1 is the reader alone. T is fit with λ, not after it: the reader's log-probability
+    and the verifier's score are each about calibrated, so their sum is overconfident, and at T = 1
+    the NLL turned the verifier off (λ = 0) on all three base runs of 2026-10-28 although it moved
+    more golds up than down."""
     if not items:
         raise ValueError("no list holds its gold")
-    nll = [float(np.mean([-np.logaddexp.reduce(np.atleast_1d(combine(r, v, lam)[g])) for r, v, g in items]))
-           for lam in grid]
-    return float(grid[int(np.argmin(nll))])
+    n = max(len(r) for r, _, _ in items)
+    reader = np.full((len(items), n), -np.inf)                   # padding: no probability at any (λ, T)
+    score, gold = np.zeros_like(reader), np.zeros(reader.shape, dtype=bool)
+    for i, (r, v, g) in enumerate(items):
+        reader[i, :len(r)], score[i, :len(v)] = r, v
+        gold[i, np.atleast_1d(g)] = True
+
+    def nll(lam: float, t: float) -> float:
+        z = (reader + lam * score) / t
+        logp = z - np.logaddexp.reduce(z, axis=1, keepdims=True)
+        return float(-np.mean(np.logaddexp.reduce(np.where(gold, logp, -np.inf), axis=1)))
+
+    table = np.array([[nll(lam, t) for t in temperatures] for lam in grid])
+    i, j = np.unravel_index(int(np.argmin(table)), table.shape)
+    return float(grid[i]), float(temperatures[j])
