@@ -8,7 +8,7 @@
   "per_device_batch": 64,
   "peak_gpu_gb_train": 26.5,
   "rescored": {
-    "git_commit": "f7a30ea6954a747874faf4625b36b51777b3c63a",
+    "git_commit": "290fb1d61bba98cabc54595fb58fe4738dad3426",
     "git_dirty": false,
     "lists": "C:\\Users\\Amadeus\\AppData\\Local\\Temp\\claude\\c--Users-Amadeus-Desktop-NUS-Y4S1-CS4248-project\\888cdc18-8bf9-4ab0-8ab6-bb241c8ed16e\\scratchpad\\lists-base"
   },
