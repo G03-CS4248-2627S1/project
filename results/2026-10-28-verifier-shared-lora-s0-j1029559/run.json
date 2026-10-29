@@ -1,0 +1,14 @@
+{
+  "run_id": "2026-10-28-verifier-shared-lora-s0-j1029559",
+  "experiment": "verifier-shared-lora",
+  "config_file": "configs/experiments/verifier-shared-lora.yaml",
+  "seed": 0,
+  "git_commit": "66dd717dbe8229d3accf0673d590c09d281123ac",
+  "git_dirty": false,
+  "slurm_job_id": "1029559",
+  "host": "xgpg2",
+  "started": "2026-10-28T13:02:02",
+  "resumed": [
+    "2026-10-28T15:13:28"
+  ]
+}

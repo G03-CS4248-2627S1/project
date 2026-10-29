@@ -1,0 +1,63 @@
+{
+  "reader": "2026-10-23-row1-joint-s0-j998373",
+  "reader_step": 4974,
+  "lists": "/home/a/amadeuse/cs4248-scratch/candidates/2026-10-23-row1-joint-s0-j998373",
+  "steps": 4974,
+  "train_minutes_last_job": 0.0,
+  "gpu": "NVIDIA H100 NVL",
+  "per_device_batch": 32,
+  "peak_gpu_gb_train": 2.6,
+  "rescored": {
+    "git_commit": "f7a30ea6954a747874faf4625b36b51777b3c63a",
+    "git_dirty": false,
+    "lists": "C:\\Users\\Amadeus\\AppData\\Local\\Temp\\claude\\c--Users-Amadeus-Desktop-NUS-Y4S1-CS4248-project\\888cdc18-8bf9-4ab0-8ab6-bb241c8ed16e\\scratchpad\\lists-large"
+  },
+  "validation": {
+    "reader_map": {
+      "exact": 76.89413596263623,
+      "f1": 89.44861050034508,
+      "total": 7708
+    },
+    "reader_mbr": {
+      "exact": 76.92008303061753,
+      "f1": 89.49714935390548,
+      "total": 7708
+    },
+    "verifier_map": {
+      "exact": 76.63466528282304,
+      "f1": 89.12928652279601,
+      "total": 7708
+    },
+    "verifier_mbr": {
+      "exact": 76.60871821484173,
+      "f1": 89.2159337567509,
+      "total": 7708
+    },
+    "combined_map": {
+      "exact": 76.82926829268293,
+      "f1": 89.37233076892839,
+      "total": 7708
+    },
+    "combined_mbr": {
+      "exact": 76.97197716658017,
+      "f1": 89.48318949267284,
+      "total": 7708
+    }
+  },
+  "lambda": 0.1,
+  "lambda_questions": 7209,
+  "temperature": {
+    "combined": 1.2810774613847884,
+    "verifier": 1.5020232887798888
+  },
+  "temperature_at_edge": {
+    "combined": false,
+    "verifier": false
+  },
+  "nll": {
+    "reader": 0.47692715143909936,
+    "verifier": 0.4962462441814861,
+    "combined_at_1": 0.48716229307005504,
+    "combined": 0.4731179093288592
+  }
+}

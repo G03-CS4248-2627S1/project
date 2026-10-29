@@ -1,0 +1,63 @@
+{
+  "reader": "2026-10-18-1b-joint-even-plain-nonull-s0-j972311",
+  "reader_step": 2487,
+  "lists": "/home/a/amadeuse/cs4248-scratch/candidates/2026-10-18-1b-joint-even-plain-nonull-s0-j972311",
+  "steps": 4974,
+  "train_minutes_last_job": 0.0,
+  "gpu": "NVIDIA A100-PCIE-40GB",
+  "per_device_batch": 64,
+  "peak_gpu_gb_train": 1.4,
+  "rescored": {
+    "git_commit": "f7a30ea6954a747874faf4625b36b51777b3c63a",
+    "git_dirty": false,
+    "lists": "C:\\Users\\Amadeus\\AppData\\Local\\Temp\\claude\\c--Users-Amadeus-Desktop-NUS-Y4S1-CS4248-project\\888cdc18-8bf9-4ab0-8ab6-bb241c8ed16e\\scratchpad\\lists-base"
+  },
+  "validation": {
+    "reader_map": {
+      "exact": 74.67566165023352,
+      "f1": 87.44849903646845,
+      "total": 7708
+    },
+    "reader_mbr": {
+      "exact": 74.7145822522055,
+      "f1": 87.63788963758194,
+      "total": 7708
+    },
+    "verifier_map": {
+      "exact": 74.48105864037363,
+      "f1": 87.14697446514236,
+      "total": 7708
+    },
+    "verifier_mbr": {
+      "exact": 74.68863518422418,
+      "f1": 87.4684463398004,
+      "total": 7708
+    },
+    "combined_map": {
+      "exact": 74.84431759211209,
+      "f1": 87.51828999096196,
+      "total": 7708
+    },
+    "combined_mbr": {
+      "exact": 74.94810586403736,
+      "f1": 87.7361610815213,
+      "total": 7708
+    }
+  },
+  "lambda": 0.7,
+  "lambda_questions": 7147,
+  "temperature": {
+    "combined": 1.818435291464152,
+    "verifier": 1.1307493068564702
+  },
+  "temperature_at_edge": {
+    "combined": false,
+    "verifier": false
+  },
+  "nll": {
+    "reader": 0.5326037917381805,
+    "verifier": 0.5403135379141633,
+    "combined_at_1": 0.6188668125381233,
+    "combined": 0.5240684016540792
+  }
+}
