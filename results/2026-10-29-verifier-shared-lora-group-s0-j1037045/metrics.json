@@ -1,0 +1,58 @@
+{
+  "reader": "2026-10-23-row1-joint-s0-j998373",
+  "reader_step": 4974,
+  "lists": "data/verifier/2026-10-23-row1-joint-s0-j998373",
+  "steps": 4974,
+  "train_minutes_last_job": 55.9,
+  "gpu": "NVIDIA H100 NVL",
+  "per_device_batch": 32,
+  "peak_gpu_gb_train": 35.9,
+  "validation": {
+    "reader_map": {
+      "exact": 77.01089776855216,
+      "f1": 89.47071312300746,
+      "total": 7708
+    },
+    "reader_mbr": {
+      "exact": 77.07576543850544,
+      "f1": 89.59880276045821,
+      "total": 7708
+    },
+    "verifier_map": {
+      "exact": 76.33627400103788,
+      "f1": 89.05558907278487,
+      "total": 7708
+    },
+    "verifier_mbr": {
+      "exact": 76.44006227296316,
+      "f1": 89.23049558193428,
+      "total": 7708
+    },
+    "combined_map": {
+      "exact": 77.01089776855216,
+      "f1": 89.47071312300746,
+      "total": 7708
+    },
+    "combined_mbr": {
+      "exact": 77.07576543850544,
+      "f1": 89.6007996671607,
+      "total": 7708
+    }
+  },
+  "lambda": 0.0,
+  "lambda_questions": 7350,
+  "temperature": {
+    "combined": 1.0608217336342378,
+    "verifier": 1.5208302322453826
+  },
+  "temperature_at_edge": {
+    "combined": false,
+    "verifier": false
+  },
+  "nll": {
+    "reader": 0.5445803903651735,
+    "verifier": 0.5742664996953531,
+    "combined_at_1": 0.5445803903651735,
+    "combined": 0.5435204804645256
+  }
+}
