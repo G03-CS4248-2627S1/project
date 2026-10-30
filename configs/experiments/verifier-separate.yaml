@@ -1,9 +1,23 @@
-# The separate verifier (#68, spec §5.4): verifier.separate_model (ModernBERT-large; for development
-# --set verifier.separate_model=answerdotai/ModernBERT-base), fully fine-tuned with its own tokenizer,
-# on the candidate lists of the reader named by --reader, with one-hot targets (f1_target_weight 0)
-# as in verifier-shared-lora.yaml. Only the reader's windows are used, not its weights. The learning
-# rate is provisional: every weight trains here, where shared_lora's 1e-4 is for LoRA and a new
-# head; plan §15.3 tunes it on base.
+# Ladder row 4: the separate verifier (#68, spec §5.4), frozen 2026-10-30 by E2 (timeline 4.4).
+# verifier.separate_model (ModernBERT-large; for development --set verifier.separate_model=answerdotai/ModernBERT-base),
+# fully fine-tuned with its own tokenizer, on the candidate lists of the reader named by --reader, with
+# one-hot targets (f1_target_weight 0) as in verifier-shared-lora.yaml. Only the reader's windows are
+# used, not its weights. lr 3e-5 was not tuned: every weight trains here, where shared_lora's 2e-4 is
+# for LoRA and a new head. Its answers are decoded with the reader's own MAP and MBR (ladder row 3),
+# from log p + λ · s with λ and a temperature fitted jointly on validation (#99).
+# Evidence, large, stage-2 reader 2026-10-23-row1-joint-s0-j998373, seed 0, validation EM, MAP / MBR:
+#   reader alone (k = 5)                                76.91 / 76.96
+#   shared_lora, lr 2e-4, span lists (j1030695, #101)   76.83 / 76.97   held-out gain +0.09 EM (7 of 10)
+#   shared_lora, group lists (j1037045, #103)           77.01 / 77.08   λ fitted to 0 (the reader's own)
+#   separate, this file (j1032972, #102)                77.15 / 77.14   held-out gain +0.23 EM (9 of 10)
+#   (held out: λ and T fitted on half the validation articles, scored on the other half, 5 splits x 2.)
+#   In an ensemble of both, the fit gives shared_lora zero weight on every half (#101).
+# Runs: verifier seeds 0-2 on the one stage-2 reader (#79, #94) and its lists in data/verifier/<reader>/:
+#   soc.sh submit --gpus=flexible --time=03:00:00 --export=ALL,EXPERIMENT=verifier-separate,SEED=<1|2> \
+#     slurm/train_verifier.sbatch --reader 2026-10-23-row1-joint-s0-j998373 --per-device-batch 16
+#   Seed 0 is 2026-10-29-verifier-separate-s0-j1032972 (88 min on an H100 MIG slice, per-device 32,
+#   peak 41.6 GB, so 32 does not fit an A100-40; 16 is about half the activations).
+#   A job that times out resumes with --export=ALL,EXPERIMENT=verifier-separate,RUN_ID=<run id> (same args).
 verifier:
   variant: separate
   type: in_place

@@ -1,9 +1,13 @@
-# The shared_lora verifier (#67, spec §5.4): the frozen reader named by --reader, plus LoRA, two
-# marker embeddings and a head, trained on that reader's candidate lists (squadqa.candidates, #66)
-# with one-hot targets (f1_target_weight 0). base.yaml's verifier.train settings are provisional;
-# plan §16 tunes the learning rate, LoRA rank and λ on base (reader 1b-joint-even-plain-nonull s0)
-# before the large run on the stage-2 reader (row 1 s0, j998373).
+# The shared_lora verifier (#67, spec §5.4), the variant E2 did not choose (frozen 2026-10-30; row 4 is
+# verifier-separate.yaml): the frozen reader named by --reader, plus LoRA, two marker embeddings and a
+# head, trained on that reader's candidate lists (squadqa.candidates, #66) with one-hot targets
+# (f1_target_weight 0). Tuned on base (reader 1b-joint-even-plain-nonull s0, #101): lr {1e-4, 2e-4} at
+# sample temperature 2.0, and 1.5 at 1e-4; 2e-4 was best (combined MAP 74.99 vs the reader's 74.68).
+# The runs at 1e-4 (j1029559, j1029900) took base.yaml's lr of the time; rerun them with
+# --set verifier.train.lr=1.0e-4. LoRA rank stayed at 16.
 verifier:
   variant: shared_lora
   type: in_place
+  train:
+    lr: 2.0e-4
 f1_target_weight: 0.0
