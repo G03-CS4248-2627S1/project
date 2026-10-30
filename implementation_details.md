@@ -2,7 +2,7 @@
 
 Implementation spec for coding agents and team members.
 
-- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v2.0). **How:** this file. **When:** [timeline.md](timeline.md). **How we work:** [workflow.md](workflow.md).
+- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v2.1). **How:** this file. **When:** [timeline.md](timeline.md). **How we work:** [workflow.md](workflow.md).
 - Week labels such as W2 or W5+ are plan weeks: W1–W7 are course weeks 7–13.
 - If this file and the plan disagree, stop and ask a human.
 
@@ -65,7 +65,7 @@ train:                                 # reader fine-tuning: the plan's sandbox 
   head_dropout: 0.1
   checkpoint_every: 500                # optimizer steps
 verifier:
-  variant: shared_lora                 # shared_lora = frozen reader + LoRA | separate = ModernBERT-large (E2 compares both)
+  variant: separate                    # frozen by E2 (30 Oct, #68): separate = ModernBERT-large, fully fine-tuned (ladder row 4) | shared_lora = frozen reader + LoRA (the losing variant)
   separate_model: answerdotai/ModernBERT-large   # pinned in squadqa/download_model.py; base for development
   type: in_place                       # in_place | levitated | levitated_shared (both P3)
   shared_option: B                     # levitated_shared only (P3): A = fully shared multi-task, B = frozen reader + marker-only LoRA
@@ -73,14 +73,14 @@ verifier:
   k_infer: 5
   k_train: 8                           # spans sampled per training question, before the gold and its boundary variants are added (squadqa.candidates; #66): lists of 10.4 on average
   sample_temperature: 2.0              # divides the reader's raw span scores when sampling training candidates, above 1 so the lists hold more than the reader's favourites; one value, checked on validation (#66, 27 Oct, reader j998373): before the gold is added, the samples hold an EM-1 span 93.9% of the time, as the validation top-5 does (93.8%), so the sampled distractors are about as hard as the reader's real mistakes; other values not tried
-  list_unit: span                      # span = one candidate per span, the gold's boundary variants added | group = one per group of boundary variants (same content core; p summed; k_train and k_infer count groups; no variants added): the verifier picks among answers and leaves boundaries to the reader
+  list_unit: span                      # span = one candidate per span, the gold's boundary variants added | group = one per group of boundary variants (same content core; p summed; k_train and k_infer count groups; no variants added): the verifier picks among answers and leaves boundaries to the reader; E2 kept span (#103: on group lists the fit turned shared_lora off)
   k_sweep: [5, 10, 20, 30]             # levitated variants only (P3)
   train_candidates: sampled            # sampled = drawn from the final reader's own span distribution (plan §4.3) | crossfit (E2 ablation)
   crossfit_folds: 3                    # crossfit ablation only, on base
   sibling_negatives: false             # P2 ablation (§3.5)
   unanswerable_negatives: false        # row 5: SQuAD 2.0 unanswerable questions with a null candidate (§5.1)
-  train:                               # squadqa.train_verifier (#67); provisional, tuned on base (plan §16: lr, LoRA rank, λ)
-    lr: 1.0e-4                         # shared_lora: LoRA, markers and head (the frozen reader has none); verifier-separate.yaml sets its own
+  train:                               # squadqa.train_verifier; frozen by E2 (30 Oct). verifier-shared-lora.yaml sets shared_lora's tuned lr (2e-4)
+    lr: 3.0e-5                         # separate: every weight of ModernBERT-large, the markers and the head; not tuned (plan §15.3)
     epochs: 1
     warmup_frac: 0.1
     weight_decay: 0.01
@@ -387,7 +387,7 @@ Not the default: the default candidates are sampled from the final reader (§5.1
   - Pinned in `MODELS` in `squadqa/download_model.py` (base and large). `verifier.load_separate_encoder` loads it in fp32 (§9) with PyTorch's attention (`attn_implementation="sdpa"`), so installing flash-attn would change nothing.
   - The reader's weights are not loaded. Its run's config and tokenizer only choose each candidate's window (§5.3).
   - The markers are two new rows of ModernBERT's embedding table, which has no spare rows (50,368 rows, 50,368 tokenizer entries). They start at the mean of the other rows and train with the rest. ModernBERT's byte-level BPE keeps the space before each marker as a token of its own (`Ġin Ġ <a> Ġ1889`), where DeBERTa-v3's tokenizer drops it.
-  - The head is `shared_lora`'s (§5.3). Every weight trains, at the config's own learning rate (3e-5, provisional; tuned on base, plan §15.3). Weight decay skips biases and LayerNorm weights found by module type (`train_verifier.no_decay`), because ModernBERT's norms (`attn_norm`, `mlp_norm`, …) don't match the reader's name rule.
+  - The head is `shared_lora`'s (§5.3). Every weight trains, at the config's own learning rate (3e-5, frozen by E2 without tuning, plan §15.3). Weight decay skips biases and LayerNorm weights found by module type (`train_verifier.no_decay`), because ModernBERT's norms (`attn_norm`, `mlp_norm`, …) don't match the reader's name rule.
   - Smoke-test it like any new training script (§9).
 
 ### 5.5 Levitated markers (P3)

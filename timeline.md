@@ -2,7 +2,7 @@
 
 When each part of the project happens, what blocks what, and what to cut if we fall behind.
 
-- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v2.0). **How:** [implementation_details.md](implementation_details.md). **When:** this file. **How we work:** [workflow.md](workflow.md).
+- **What and why:** `Extractive_QA_Design_Plan.docx` (plan v2.1). **How:** [implementation_details.md](implementation_details.md). **When:** this file. **How we work:** [workflow.md](workflow.md).
 - This file expands plan §12 into stages. The plan's W1–W7 are course weeks 7–13. Section numbers below (§5, E3, …) refer to the plan.
 - If this file and the plan disagree on scope, stop and ask a human.
 - Drafted 2026-09-28 (week 7). Moved to the submitted proposal's schedule on 2026-10-03 (plan v1.0). Whoever changes a milestone or a stage's scope updates this file and tells the team.
@@ -159,8 +159,8 @@ These wait on a result, but are short and off the critical path:
 
 - **4.1 Training.** On the sampled candidates, base first, then large. The spec §5.7 acceptance tests for the variant must pass first.
 - **4.2 Combining.** Reader log-probability + λ × verifier score, softmax over candidates, recalibrate, decode. Tune λ on the validation split.
-- **4.3 E2.** Shared vs. separate; listwise vs. pointwise; in-sample (sampled) vs. cross-fitted candidates; fix types (boundary fix vs. switch to a different answer).
-- **4.4 Freeze the better variant** (Thu 29 Oct) through a freeze PR. Then launch ladder row 4 on large, 3 seeds, from `main`.
+- **4.3 E2.** Shared vs. separate; listwise vs. pointwise; in-sample (sampled) vs. cross-fitted candidates; fix types (boundary fix vs. switch to a different answer). *Outcome (#101–#103):* on the large stage-2 reader, seed 0, separate (ModernBERT-large) gained +0.23 EM held out (9 of 10 halves positive) and shared_lora +0.09 (7 of 10); with group lists shared_lora was fitted off (λ 0), and in an ensemble it got zero weight. Only shared vs. separate and span vs. group lists ran; pointwise, cross-fitting and fix types are left for the final ablations.
+- **4.4 Freeze the better variant** (Thu 29 Oct) through a freeze PR. Then launch ladder row 4 on large, 3 seeds, from `main`. *Done 30 Oct, a day late:* row 4 = `configs/experiments/verifier-separate.yaml` (lr 3e-5, not tuned), verifier seeds 0–2 on the one stage-2 reader; seed 0 is j1032972.
 - **4.5 Row 5 verifier.** The frozen variant, trained with the SQuAD 2.0 unanswerable negatives (spec §5.1), on top of the row 5 reader.
 
 **Done when:** row 4 is trained and row 5 is running. **Fallback:** drop the cross-fitting ablation before either variant.

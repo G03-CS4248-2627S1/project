@@ -24,7 +24,7 @@ def test_experiment_overrides_only_its_keys(tmp_path):
     cfg = C.load_config(exp)
     assert cfg["span_head"] == "standard"
     assert cfg["verifier"]["k_infer"] == 3
-    assert cfg["verifier"]["variant"] == "shared_lora"       # sibling keys survive
+    assert cfg["verifier"]["variant"] == "separate"          # sibling keys survive
     assert cfg["max_seq_len"] == 384
 
 

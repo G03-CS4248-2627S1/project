@@ -1,8 +1,9 @@
 #!/bin/bash
-# A verifier (squadqa.train_verifier) on a reader's candidate lists (squadqa.candidates): shared_lora
-# (#67, the default) or separate (#68, ModernBERT):
+# A verifier (squadqa.train_verifier) on a reader's candidate lists (squadqa.candidates): separate
+# (#68, ModernBERT-large, ladder row 4 since the E2 freeze; the default) or shared_lora (#67):
 #   bash .claude/skills/soc-cluster/soc.sh submit slurm/train_verifier.sbatch --reader <reader run_id>
-#   soc.sh submit --export=ALL,EXPERIMENT=verifier-separate slurm/train_verifier.sbatch --reader <reader run_id>
+#   soc.sh submit --export=ALL,EXPERIMENT=verifier-shared-lora slurm/train_verifier.sbatch --reader <reader run_id>
+# Row 4's runs: configs/experiments/verifier-separate.yaml.
 # Smoke run (spec §9), then the resume with the same RUN_ID and without --stop-after:
 #   soc.sh submit slurm/train_verifier.sbatch --reader <run> --max-steps 40 --stop-after 20
 #   soc.sh submit --export=ALL,RUN_ID=<run id> slurm/train_verifier.sbatch --reader <run> --max-steps 40
@@ -27,7 +28,7 @@ export HF_HUB_OFFLINE=1   # a missing model file raises an error instead of down
 [ "$(git rev-parse HEAD)" = "${SQUADQA_COMMIT:?Submit with soc.sh submit, which sets SQUADQA_COMMIT}" ] ||
   { echo "The clone is at $(git rev-parse --short HEAD), not the submitted ${SQUADQA_COMMIT:0:7}." >&2; exit 1; }
 
-EXPERIMENT="${EXPERIMENT:-verifier-shared-lora}"   # the file name in configs/experiments/, without .yaml
+EXPERIMENT="${EXPERIMENT:-verifier-separate}"       # the file name in configs/experiments/, without .yaml
 SEED="${SEED:-0}"
 TAG="${TAG:+-$TAG}"                                 # optional variant name for --set runs (e.g. TAG=base)
 RUN_ID="${RUN_ID:-$(date +%F)-$EXPERIMENT$TAG-s$SEED-j$SLURM_JOB_ID}"
