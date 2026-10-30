@@ -1,0 +1,11 @@
+{
+  "run_id": "2026-10-30-row1-joint-risk-share0.25-s2-j1044589",
+  "experiment": "row1-joint",
+  "config_file": "configs/experiments/row1-joint.yaml",
+  "seed": 2,
+  "git_commit": "e201267387375783250af27b55e2361ad4d7153e",
+  "git_dirty": false,
+  "slurm_job_id": "1044589",
+  "host": "xgpi2",
+  "started": "2026-10-30T18:18:07"
+}
