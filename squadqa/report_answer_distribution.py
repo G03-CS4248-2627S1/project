@@ -32,7 +32,7 @@ def main():
          assert abs(sum(r['p_regions'])+r['outside_mass']-1)<1e-8
       all_data[(run,prefix)]=(s,p)
     print('18 JSON artifacts validated; all per-question summaries recomputed exactly.')
-    
+
     def ms(xs):return {'mean':float(np.mean(xs)), 'sample_std':float(np.std(xs,ddof=1)), 'seeds':list(map(float,xs))}
     report={'analysis_commit':'aaba686bc8ac7980a1052415928aaeb6063fdc13','jobs':{'setup':1048451,'smoke':1048453,'multi_answer':1048460,'shape':1048461},'tests':{'passed':389,'skipped':13},'nq':{},'shape':{},'validation_checks':{}}
     for t in ['at_1','calibrated']:
