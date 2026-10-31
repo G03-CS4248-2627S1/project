@@ -62,3 +62,9 @@ GPU smoke, then independent #95/#96 jobs gated by successful smoke. Fetch artifa
 check counts and validation score agreement, summarize across seeds without confusing
 question uncertainty with seed spread, and submit a results PR. Post issue-specific
 summary comments with job IDs, commit, caveats and PR link. Assistants never merge.
+
+## Collected results
+
+See `reports/answer_distribution_2026-10-31.md`. Rebuild/audit the numerical report with
+`python -m squadqa.report_answer_distribution`; this uses committed JSON only, without
+a GPU or model checkpoint.
