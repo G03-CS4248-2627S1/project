@@ -26,6 +26,7 @@ the same text; the separate verifier learns the pattern in fine-tuning.
 from __future__ import annotations
 
 import contextlib
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -245,12 +246,16 @@ class SharedLoraVerifier(nn.Module):
 ATTENTION = "sdpa"      # PyTorch's attention, named so a flash-attn install can't change the kernels
 
 
+def separate_attention(name: str) -> str:
+    """Explicit backend by encoder family; DeBERTa-v3 uses its disentangled eager attention."""
+    return "eager" if name in ("microsoft/deberta-v3-base", "microsoft/deberta-v3-large") else ATTENTION
+
+
 def load_separate_encoder(name: str):
-    """verifier.separate_model at its pin, in fp32 (spec §9), with ATTENTION. A right-padded batch
-    then scores each candidate as it would alone (test_verifier, on a tiny ModernBERT)."""
+    """Load the pinned encoder in fp32: SDPA for ModernBERT, explicit eager for DeBERTa-v3."""
     from squadqa.train_reader import load_encoder
 
-    return load_encoder(name, attn_implementation=ATTENTION)
+    return load_encoder(name, attn_implementation=separate_attention(name))
 
 
 class SeparateVerifier(nn.Module):
@@ -297,6 +302,54 @@ def listwise_loss(scores: torch.Tensor, question: torch.Tensor, targets: torch.T
     logp = scores - _segment_logsumexp(scores, question, n_questions)[question]
     contrib = torch.where(targets > 0, targets * logp, torch.zeros_like(logp))     # 0 · −inf stays 0
     return -torch.zeros(n_questions, device=scores.device, dtype=scores.dtype).index_add(0, question, contrib)
+
+
+def check_loss_config(cfg: dict) -> None:
+    """Additional verifier losses are explicit ablations; old configs retain one-hot CE."""
+    settings = cfg["verifier"]
+    objective = settings.get("loss", "onehot")
+    weight, margin = settings.get("ranking_weight", 0.0), settings.get("ranking_margin", 1.0)
+    if objective not in ("onehot", "gold_group", "ce_margin"):
+        raise ValueError("verifier.loss must be onehot, gold_group or ce_margin")
+    if not math.isfinite(weight) or not 0 <= weight <= 1 or not math.isfinite(margin) or margin < 0:
+        raise ValueError("ranking_weight must be in [0, 1] and ranking_margin finite and nonnegative")
+    if objective != "ce_margin" and weight:
+        raise ValueError("ranking_weight applies only to verifier.loss ce_margin")
+    if objective == "ce_margin" and weight == 0:
+        raise ValueError("ce_margin needs a positive ranking_weight")
+    if objective != "onehot" and (cfg["f1_target_weight"] or settings.get("list_unit", "span") != "span"):
+        raise ValueError("gold_group and ce_margin need one-hot targets on unchanged span lists")
+
+
+def training_loss(scores: torch.Tensor, question: torch.Tensor, targets: torch.Tensor,
+                  n_questions: int, settings: dict, correct: torch.Tensor | None = None) -> torch.Tensor:
+    """One loss per question. `correct` is the list's positional normalized EM-1 mask."""
+    from squadqa.heads import _segment_logsumexp
+
+    objective = settings.get("loss", "onehot")
+    if objective == "onehot":
+        return listwise_loss(scores, question, targets, n_questions)
+    if objective not in ("gold_group", "ce_margin"):
+        raise ValueError(f"unknown verifier loss {objective!r}")
+    if correct is None or correct.dtype != torch.bool or correct.shape != scores.shape:
+        raise ValueError("new verifier losses need a boolean EM-1 mask for every candidate")
+    counts = torch.bincount(question[correct], minlength=n_questions)
+    if (counts == 0).any():
+        raise ValueError("a training list has no EM-1 candidate")
+    if objective == "gold_group":
+        return (_segment_logsumexp(scores, question, n_questions)
+                - _segment_logsumexp(scores[correct], question[correct], n_questions))
+    gold = targets == 1
+    if ((targets != 0) & ~gold).any() or not (torch.bincount(question[gold], minlength=n_questions) == 1).all():
+        raise ValueError("ce_margin needs exactly one annotated one-hot gold per question")
+    if not correct[gold].all():
+        raise ValueError("the annotated gold must have EM 1")
+    positive = _segment_logsumexp(scores[gold], question[gold], n_questions)
+    negative = scores.new_full((n_questions,), -torch.inf).scatter_reduce(
+        0, question[~correct], scores[~correct], "amax", include_self=True)
+    margin, weight = settings.get("ranking_margin", 1.0), settings.get("ranking_weight", 0.0)
+    hinge = torch.where(torch.isfinite(negative), (margin - positive + negative).clamp(min=0), 0.0)
+    return (1 - weight) * listwise_loss(scores, question, targets, n_questions) + weight * hinge
 
 
 def combine(reader_logp: np.ndarray, verifier_score: np.ndarray, lam: float,

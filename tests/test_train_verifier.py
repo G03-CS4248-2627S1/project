@@ -132,8 +132,10 @@ def _trim(dataset, ids):
     return out
 
 
-@pytest.mark.parametrize("variant,unit", [("shared_lora", "span"), ("shared_lora", "group"), ("separate", "span")])
-def test_main_trains_resumes_and_scores(variant, unit, tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize("variant,unit,objective", [("shared_lora", "span", "onehot"),
+    ("shared_lora", "group", "onehot"), ("separate", "span", "onehot"),
+    ("separate", "span", "gold_group"), ("separate", "span", "ce_margin")])
+def test_main_trains_resumes_and_scores(variant, unit, objective, tmp_path, monkeypatch, capsys):
     """candidates.main then train_verifier.main, as the cluster jobs run them, on a tiny reader and
     30 questions per split, into fresh folders: a run stopped early (--stop-after) resumes from its
     checkpoint, finishes and writes its results (jobs 1008523 and 1008579 failed while saving).
@@ -191,7 +193,8 @@ def test_main_trains_resumes_and_scores(variant, unit, tmp_path, monkeypatch, ca
     config = f"configs/experiments/verifier-{variant.replace('_', '-')}.yaml"
     common = ["--reader", reader_run, "--config", config, "--seed", "0",
               "--run-id", run, "--per-device-batch", "24", "--max-steps", "3",
-              "--set", "verifier.lora.rank=4", "--set", "verifier.train.effective_batch=4", *unit_set]
+              "--set", "verifier.lora.rank=4", "--set", "verifier.train.effective_batch=4", *unit_set,
+              "--set", f"verifier.loss={objective}", "--set", f"verifier.ranking_weight={0.1 if objective == 'ce_margin' else 0.0}"]
     TV.main(common + ["--stop-after", "2"])
     ckpt = tmp_path / "scratch" / "runs" / run / TV.CHECKPOINT
     assert torch.load(ckpt, weights_only=False)["step"] == 2

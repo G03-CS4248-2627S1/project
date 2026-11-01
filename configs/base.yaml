@@ -43,6 +43,7 @@ train:                                 # reader fine-tuning: the plan's sandbox 
 verifier:
   variant: separate                    # frozen by E2 (30 Oct, #68): separate = ModernBERT-large, fully fine-tuned (ladder row 4) | shared_lora = frozen reader + LoRA (the losing variant)
   separate_model: answerdotai/ModernBERT-large   # pinned in squadqa/download_model.py; base for development
+  gradient_checkpointing: false        # optional activation recomputation for the independent verifier
   type: in_place                       # in_place | levitated | levitated_shared (both P3)
   shared_option: B                     # levitated_shared only (P3): A = fully shared multi-task, B = frozen reader + marker-only LoRA
   lora: {rank: 16, alpha: 32, targets: [query_proj, key_proj, value_proj]}   # shared_lora and option B; check module names in the installed HF version
@@ -50,6 +51,9 @@ verifier:
   k_train: 8                           # spans sampled per training question, before the gold and its boundary variants are added (squadqa.candidates; #66): lists of 10.4 on average
   sample_temperature: 2.0              # divides the reader's raw span scores when sampling training candidates, above 1 so the lists hold more than the reader's favourites; one value, checked on validation (#66, 27 Oct, reader j998373): before the gold is added, the samples hold an EM-1 span 93.9% of the time, as the validation top-5 does (93.8%), so the sampled distractors are about as hard as the reader's real mistakes; other values not tried
   list_unit: span                      # span = one candidate per span, the gold's boundary variants added | group = one per group of boundary variants (same content core; p summed; k_train and k_infer count groups; no variants added): the verifier picks among answers and leaves boundaries to the reader; E2 kept span (#103: on group lists the fit turned shared_lora off)
+  loss: onehot                        # onehot = current listwise CE | gold_group = marginal NLL of EM-1 spans | ce_margin = CE plus hard-negative margin
+  ranking_weight: 0.0                  # ce_margin only: (1-weight)*CE + weight*margin loss
+  ranking_margin: 1.0                  # required gap between annotated gold and highest-scoring EM-0 candidate
   k_sweep: [5, 10, 20, 30]             # levitated variants only (P3)
   train_candidates: sampled            # sampled = drawn from the final reader's own span distribution (plan §4.3) | crossfit (E2 ablation)
   crossfit_folds: 3                    # crossfit ablation only, on base

@@ -1,0 +1,10 @@
+# V1: exact same span candidates as the CE control; pool EM-1 probabilities in the loss only.
+verifier:
+  variant: separate
+  separate_model: answerdotai/ModernBERT-large
+  type: in_place
+  list_unit: span
+  loss: gold_group
+  train:
+    lr: 3.0e-5
+f1_target_weight: 0.0
