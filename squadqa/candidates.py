@@ -32,6 +32,7 @@ log-probability at the run's calibrated temperature. Each list also records the 
 
     python -m squadqa.candidates --run-id <reader run> --split train          # sampled lists
     python -m squadqa.candidates --run-id <reader run> --split validation     # top-k lists
+    python -m squadqa.candidates --run-id <reader run> --split dev --final    # stage 5 only (workflow.md §6.1)
     python -m squadqa.candidates --run-id <reader run> --split train --source squad2-unanswerable \
         --set verifier.list_unit=group
 
@@ -54,6 +55,7 @@ import numpy as np
 from squadqa.data import answer_word_span
 from squadqa.decode import (SpanScores, answer_text, content_flags, group_cores, log_softmax, span_f1_em,
                             span_logp, span_precision_recall, top_k)
+from squadqa.evaluate import FINAL_SETS
 
 VERIFIER_DATA = Path("data/verifier")       # gitignored; one folder per reader run
 SPLITS = ("train", "validation")
@@ -465,10 +467,10 @@ def build_lists(examples, spans: list[SpanScores], split: str, cfg: dict, temper
 
 def load_source(source: str, split: str):
     """The questions a source's lists are built on."""
-    from squadqa.data import load_extra, load_split, load_unanswerable
+    from squadqa.data import load_extra, load_split, load_squad, load_unanswerable
 
     if source == "squad":
-        return load_split(split)
+        return load_split(split) if split in SPLITS else load_squad(FINAL_SETS[split])
     if split != "train":
         raise ValueError(f"--source {source} gives training lists only")
     return load_unanswerable() if source == "squad2-unanswerable" else load_extra(source)
@@ -478,13 +480,15 @@ def main(argv: list[str] | None = None) -> None:
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     import torch
 
+    from squadqa import evaluate as E
     from squadqa.config import RESULTS, git_state, load_config, write_json
     from squadqa.data import featurize, load_split
     from squadqa.predict import load_reader, reader_score_fn, score_questions
 
     parser = argparse.ArgumentParser(description="Verifier candidate lists from a trained reader.")
     parser.add_argument("--run-id", required=True, help="the reader run to sample from")
-    parser.add_argument("--split", required=True, choices=SPLITS)
+    parser.add_argument("--split", required=True, choices=(*SPLITS, *FINAL_SETS))
+    parser.add_argument("--final", action="store_true", help="allow dev and the robustness sets (stage 5 only)")
     parser.add_argument("--source", default="squad", choices=SOURCES,
                         help="the questions: train-v1.1 (default), or for training lists AdversarialQA "
                              "or SQuAD 2.0's unanswerable questions")
@@ -496,6 +500,8 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     if args.source != "squad" and args.split != "train":
         parser.error(f"--source {args.source} gives training lists only")
+    if args.split in FINAL_SETS:
+        E.load_eval_set(args.split, args.final)         # raises without --final
 
     # The reader's own config sets how it windows and scores; the current config sets the lists
     # (the reader run predates the verifier keys) and the F1 / EM they are labelled with.

@@ -239,6 +239,20 @@ def test_main_refuses_a_reader_trained_on_extra_data(monkeypatch):
     with pytest.raises(NotImplementedError, match="extra_train_data"):
         C.main(["--run-id", "x", "--split", "train"])
 
+def test_main_refuses_final_sets_without_final():
+    with pytest.raises(RuntimeError, match="final scoring"):
+        C.main(["--run-id", "x", "--split", "dev"])
+
+
+def test_load_source_reads_a_final_set(monkeypatch):
+    from squadqa import data as D
+    seen = []
+    monkeypatch.setattr(D, "load_squad", lambda path, answers="answers": seen.append(path) or ["q"])
+    assert C.load_source("squad", "dev") == ["q"] and seen == [C.FINAL_SETS["dev"]]
+    with pytest.raises(ValueError, match="training lists only"):
+        C.load_source("adversarialqa", "dev")
+
+
 def test_recall_em_counts_a_boundary_variant_and_recall_does_not():
     """A reader trained per group often ranks "the X" above the annotated "X": a hit for recall_em
     (EM 1 under normalized) but not for recall (the annotated span by position)."""

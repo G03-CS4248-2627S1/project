@@ -49,6 +49,15 @@ arguments minus --stop-after.
 re-runs that evaluation from a finished run's saved verifier_scores_validation.json, on the CPU
 with no model (the reader's tokenizer only), and rewrites its predictions and the evaluation part
 of metrics.json; a "rescored" entry records the commit. The lists must be the ones the run scored.
+
+    python -m squadqa.train_verifier --score <verifier run_id> --eval-set dev --final [--lists DIR] [--per-device-batch N]
+
+scores a finished verifier on an evaluation set from its checkpoint, on the reader's lists for that
+set (python -m squadqa.candidates --split dev --final). Nothing is trained or fitted: λ and the
+temperatures are the ones metrics.json holds from validation, so nothing is tuned on a final set
+(spec rule 1). A final set (stage 5 only) writes verifier_scores_<set>.json and
+predictions_<set>_{reader,verifier,combined}_{map,mbr}.json, and adds <set> to metrics.json.
+--eval-set validation writes nothing: it checks that the path reproduces the run's saved predictions.
 """
 from __future__ import annotations
 
@@ -273,7 +282,7 @@ def evaluate(examples: list[D.Example], entries: list[dict], scores: list[np.nda
     answers; MAP's doesn't move. All go through decode.decode on the k candidates, so boundary
     variants are grouped as in the reader's own MAP and MBR; the reader alone over k = 5 can differ
     slightly from its run's predictions, which decode over decode_topk."""
-    from squadqa.decode import Candidates, answer_text, content_flags, decode, log_softmax, temperature_nll
+    from squadqa.decode import temperature_nll
 
     items = []
     for e, s in zip(entries, scores):
@@ -295,6 +304,15 @@ def evaluate(examples: list[D.Example], entries: list[dict], scores: list[np.nda
     else:
         print("warning: no validation list holds an EM-1 candidate, so λ = 0 and no temperature is fit", flush=True)
         t_comb = t_ver = 1.0
+    return fit, decode_predictions(examples, entries, scores, rcfg, lam, t_comb, t_ver)
+
+
+def decode_predictions(examples: list[D.Example], entries: list[dict], scores: list[np.ndarray], rcfg: dict,
+                       lam: float, t_comb: float, t_ver: float) -> dict[str, dict[str, str]]:
+    """The answers of the reader alone, the verifier alone and combined, under each of the reader's
+    decode_rules, with the given λ and temperatures."""
+    from squadqa.decode import Candidates, answer_text, content_flags, decode, log_softmax
+
     preds = {f"{who}_{rule}": {} for who in ("reader", "verifier", "combined") for rule in rcfg["decode_rules"]}
     for ex, e, s in zip(examples, entries, scores):
         q = ex.question
@@ -307,7 +325,7 @@ def evaluate(examples: list[D.Example], entries: list[dict], scores: list[np.nda
             for rule in rcfg["decode_rules"]:
                 i, j = decode(Candidates(starts, ends, lp), flags, rule, rcfg["mbr_utility"], rcfg["mbr_em_weight"], texts)
                 preds[f"{who}_{rule}"][q.id] = answer_text(q.context, ex.context.words, i, j)
-    return fit, preds
+    return preds
 
 
 def by_id(feats: D.Features, lists: dict[str, dict]) -> tuple[list[D.Example], list[dict]]:
@@ -321,9 +339,30 @@ def by_id(feats: D.Features, lists: dict[str, dict]) -> tuple[list[D.Example], l
     return examples, [lists[ex.question.id] for ex in examples]
 
 
-def main(argv: list[str] | None = None) -> None:
+def build_verifier(cfg: dict, reader_run: str, device: str):
+    """This config's verifier on the device, before any checkpoint, with what scoring needs:
+    (verifier, marker, the reader's config, the reader's tokenizer, the verifier's tokenizer, the
+    reader's checkpoint step or None)."""
     from squadqa import predict as P
 
+    if cfg["verifier"]["variant"] == "shared_lora":
+        rcfg, tok, reader, reader_step = P.load_reader(reader_run, device)
+        vtok = tok
+        open_id, close_id = V.add_markers(vtok)
+        V.resize_for_markers(reader.encoder, vtok)
+        v = V.SharedLoraVerifier(reader, open_id, close_id, cfg).to(device)
+    else:                                               # the reader's windows only, not its weights
+        rcfg, reader_step = P.run_config(reader_run), None
+        tok = D.load_tokenizer(rcfg["model"])
+        vtok = D.load_tokenizer(cfg["verifier"]["separate_model"])
+        encoder = V.load_separate_encoder(cfg["verifier"]["separate_model"])
+        open_id, close_id = V.add_markers(vtok)
+        V.resize_for_markers(encoder, vtok)
+        v = V.SeparateVerifier(encoder, open_id, close_id, cfg).to(device)
+    return v, Marker(tok, rcfg, open_id, close_id, vtok), rcfg, tok, vtok, reader_step
+
+
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Train a verifier, then score validation.")
     C.add_run_args(parser)
     parser.add_argument("--reader", required=True,
@@ -350,21 +389,7 @@ def main(argv: list[str] | None = None) -> None:
     gpu = torch.cuda.get_device_name() if device == "cuda" else "cpu"
     print(f"run {run_dir.name} on {gpu}; reader {args.reader}; checkpoints in {ckpt_dir}", flush=True)
 
-    if variant == "shared_lora":
-        rcfg, tok, reader, reader_step = P.load_reader(args.reader, device)
-        vtok = tok
-        open_id, close_id = V.add_markers(vtok)
-        V.resize_for_markers(reader.encoder, vtok)
-        v = V.SharedLoraVerifier(reader, open_id, close_id, cfg).to(device)
-    else:                                               # the reader's windows only, not its weights
-        rcfg, reader_step = P.run_config(args.reader), None
-        tok = D.load_tokenizer(rcfg["model"])
-        vtok = D.load_tokenizer(cfg["verifier"]["separate_model"])
-        encoder = V.load_separate_encoder(cfg["verifier"]["separate_model"])
-        open_id, close_id = V.add_markers(vtok)
-        V.resize_for_markers(encoder, vtok)
-        v = V.SeparateVerifier(encoder, open_id, close_id, cfg).to(device)
-    marker = Marker(tok, rcfg, open_id, close_id, vtok)
+    v, marker, rcfg, tok, vtok, reader_step = build_verifier(cfg, args.reader, device)
     folder = lists_dir(args.reader, args.lists)
 
     t0 = time.time()
@@ -445,10 +470,68 @@ def rescore(run_id: str, lists: str | None = None) -> dict:
     return metrics
 
 
+def score_set(run_id: str, eval_set: str, final: bool = False, lists: str | None = None, per_device: int = 32) -> dict:
+    """Score a finished verifier on an evaluation set from its checkpoint (module docstring). Returns the
+    set's metrics; for validation, the number of answers that differ from the saved ones, and raises
+    if more than 1% of any file's do (GPU numerics can flip a near-tie, but no more than that)."""
+    import yaml
+    from squadqa import predict as P
+
+    dataset = E.load_eval_set(eval_set, final)          # raises for dev etc. without final
+    run_dir = C.RESULTS / run_id
+    cfg = yaml.safe_load((run_dir / "config.yaml").read_text(encoding="utf-8"))
+    metrics = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
+    if "temperature" in metrics:
+        lam, t_comb, t_ver = metrics["lambda"], metrics["temperature"]["combined"], metrics["temperature"]["verifier"]
+    else:                                               # as evaluate decoded it: no validation list held its gold
+        print(f"warning: {run_id} fitted no temperatures, so this is the reader alone (lambda 0, T 1)", flush=True)
+        lam, t_comb, t_ver = 0.0, 1.0, 1.0
+    ckpt = Path(C.env("SQUADQA_SCRATCH")) / "runs" / run_id / CHECKPOINT
+    if not ckpt.exists():
+        raise FileNotFoundError(f"{ckpt} is missing")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    reader = cfg["verifier"]["reader"]
+    v, marker, rcfg, tok, vtok, _ = build_verifier(cfg, reader, device)
+    step = load_checkpoint(ckpt, v)
+    feats = D.featurize(P.eval_questions(eval_set), tok, rcfg, training=False)
+    examples, entries = by_id(feats, load_lists(lists_dir(reader, lists), eval_set))
+    if len(examples) != len(feats.examples):
+        raise RuntimeError(f"{len(feats.examples) - len(examples)} {eval_set} questions have no list")
+    print(f"{run_id} at step {step}: {len(examples)} {eval_set} lists, lambda {lam}, T {t_comb:.3f}", flush=True)
+    scores = score_lists(v, marker, examples, entries, device, vtok.pad_token_id, per_device)
+    scores = [np.array([round(float(x), 6) for x in s]) for s in scores]
+    preds = decode_predictions(examples, entries, scores, rcfg, lam, t_comb, t_ver)
+    if eval_set == "validation":
+        differ = {}
+        for name, answers in preds.items():
+            saved = E.load_predictions(run_dir / f"predictions_validation_{name}.json")
+            differ[name] = sum(answers[q] != saved[q] for q in saved)
+            if differ[name] > 0.01 * len(saved):
+                raise RuntimeError(f"{name}: {differ[name]} of {len(saved)} answers differ from the saved predictions")
+        print("DIFFER", differ, flush=True)
+        return {"differ": differ}
+    C.write_json(run_dir / f"verifier_scores_{eval_set}.json", {ex.question.id: s.tolist() for ex, s in zip(examples, scores)})
+    for name, answers in preds.items():
+        C.write_json(run_dir / f"predictions_{eval_set}_{name}.json", answers)
+    metrics[eval_set] = {name: E.metrics(eval_set, dataset, p) for name, p in preds.items()}
+    C.write_json(run_dir / "metrics.json", metrics)
+    print("RESULT", {k: metrics[eval_set][k] for k in ("reader_mbr", "combined_map", "combined_mbr")}, flush=True)
+    return metrics[eval_set]
+
+
 def cli(argv: list[str] | None = None) -> None:
-    """main, or rescore with --rescore <run_id> [--lists DIR]."""
+    """main, rescore with --rescore <run_id> [--lists DIR], or score_set with --score <run_id> --eval-set <set>."""
     argv = sys.argv[1:] if argv is None else argv
-    if "--rescore" in argv:
+    if "--score" in argv:
+        p = argparse.ArgumentParser(description="Score a finished verifier on an evaluation set.")
+        p.add_argument("--score", required=True, metavar="RUN_ID")
+        p.add_argument("--eval-set", default="validation", choices=E.EVAL_SETS)
+        p.add_argument("--final", action="store_true", help="allow dev and the robustness sets (stage 5 only)")
+        p.add_argument("--lists", help="folder of the candidate lists (default: data/verifier/<reader>)")
+        p.add_argument("--per-device-batch", type=int, default=32, help="candidates per forward pass")
+        a = p.parse_args(argv)
+        score_set(a.score, a.eval_set, a.final, a.lists, a.per_device_batch)
+    elif "--rescore" in argv:
         p = argparse.ArgumentParser(description="Re-run a finished verifier run's validation evaluation.")
         p.add_argument("--rescore", required=True, metavar="RUN_ID")
         p.add_argument("--lists", help="folder of the candidate lists (default: data/verifier/<reader>)")
