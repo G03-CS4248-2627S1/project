@@ -227,6 +227,7 @@ def test_heldout_with_flat_scores_gains_nothing_under_map():
     pytest.importorskip("torch")
     out = R.heldout(*heldout_lists(signal=0.0), RCFG, splits=1)
     assert out["rules"]["map"]["exact"]["gains"] == [0.0, 0.0]      # distinct cores: T can't move MAP
+    assert out["rules"]["map"]["exact"]["positive"] == 0            # a zero gain doesn't count as positive
 
 
 def test_heldout_fits_only_on_the_fit_half(monkeypatch):
