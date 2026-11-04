@@ -1,6 +1,8 @@
 import json
 import math
+from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from squadqa import evaluate as E
@@ -108,3 +110,136 @@ def test_signed_sums():
     per = {"A": {"q": 0.2}, "B": {"q": 0.5}, "C": {"q": 0.1}}
     neg, pos = R.signed_sums(per, {"B": 1, "C": 1, "A": -2})
     assert pos["q"] - neg["q"] == pytest.approx(0.5 + 0.1 - 0.4)
+
+
+def test_parse_system_takes_the_verifier_rules():
+    for rule in ("combined_map", "combined_mbr", "reader_map", "verifier_mbr"):
+        assert R.parse_system(f"B={rule}:r1,r2") == ("B", rule, ["r1", "r2"])
+    for bad in ["B=combined:r1", "B=shared_map:r1", "B=combined_greedy:r1"]:
+        with pytest.raises(ValueError):
+            R.parse_system(bad)
+
+
+def adversarial_set():
+    """q0 has an original and two adversarial versions, q1 only its original."""
+    context = CONTEXT
+    qas = [{"id": i, "question": "?", "answers": [{"text": "cat", "answer_start": 4}]} for i in ("q0", "q0-a", "q0-b", "q1")]
+    return [{"title": "T", "paragraphs": [{"context": context, "qas": qas}]}]
+
+
+def write_preds(root, run_id, split, rule, preds):
+    d = root / run_id
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"predictions_{split}_{rule}.json").write_text(json.dumps(preds), encoding="utf-8")
+
+
+def test_compare_on_adversarial_sets_uses_the_worst_case_groups(tmp_path, monkeypatch):
+    monkeypatch.setattr(R, "RESULTS", tmp_path)
+    monkeypatch.setattr(E, "load_eval_set", lambda name, final=False: adversarial_set())
+    # Right on q0 and q1, wrong on one version of q0: the group takes its worst version, so EM is 1 of 2 groups.
+    worst = {"q0": "cat", "q0-a": "cat", "q0-b": "mat", "q1": "cat"}
+    right = {"q0": "cat", "q0-a": "cat", "q0-b": "cat", "q1": "cat"}
+    write_preds(tmp_path, "r", "addsent", "map", worst)
+    write_preds(tmp_path, "r", "addsent", "combined_map", right)
+    out = R.compare([("A", "map", ["r"]), ("B", "combined_map", ["r"])], ["B-A"], "addsent", 100, final=True)
+    assert out["split"] == "addsent"
+    assert out["systems"]["A"]["exact"]["mean"] == pytest.approx(50.0)
+    assert out["systems"]["A"]["exact"]["mean"] == pytest.approx(E.metrics("addsent", adversarial_set(), worst)["adversarial"]["exact"])
+    assert out["contrasts"]["B-A"]["exact"]["diff"] == pytest.approx(50.0)
+    # Other sets score every question on its own.
+    write_preds(tmp_path, "r", "dev", "map", worst)
+    out = R.compare([("A", "map", ["r"])], [], "dev", 100, final=True)
+    assert out["systems"]["A"]["exact"]["mean"] == pytest.approx(75.0)
+
+
+def test_compare_refuses_final_sets_without_final():
+    with pytest.raises(RuntimeError, match="final scoring"):
+        R.compare([("A", "map", ["r"])], [], "dev")
+
+
+def test_main_passes_split_and_final(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(R, "RESULTS", tmp_path)
+    seen = {}
+
+    def load(name, final=False):
+        seen.update(name=name, final=final)
+        return adversarial_set()
+
+    monkeypatch.setattr(E, "load_eval_set", load)
+    write_preds(tmp_path, "r", "dev", "combined_mbr", {"q0": "cat", "q0-a": "cat", "q0-b": "cat", "q1": "cat"})
+    R.main(["compare", "A=combined_mbr:r", "--split", "dev", "--final"])
+    assert seen == {"name": "dev", "final": True}
+    assert "| A | COMBINED_MBR | 1 | 100.00" in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        R.main(["compare", "A=map:r", "--split", "not-a-set"])
+
+
+def test_article_splits_use_each_half_both_ways():
+    titles = [f"t{k}" for k in range(9)]
+    got = R.article_splits(titles, 3)
+    assert len(got) == 6
+    for fit, test in got:
+        assert fit | test == set(titles) and not fit & test
+    assert got[0] == (got[1][1], got[1][0]) and got[2] == (got[3][1], got[3][0])
+    assert got[0][0] != got[2][0]                                   # the seeds give different halves
+    assert R.article_splits(reversed(titles), 3) == got             # independent of the input order
+
+
+def heldout_lists(n=60, seed=0, signal=1.5):
+    """n lists over one passage, in 6 articles: random reader log-probabilities over spans with distinct
+    cores, one of them the gold, and verifier scores that favour it by `signal` (0: flat scores)."""
+    from squadqa.data import word_spans
+
+    context = "The tower was built in 1889 in Paris ."
+    words = word_spans(context)
+    rng = np.random.default_rng(seed)
+    spans = [[1, 1], [3, 3], [5, 5], [7, 7], [5, 7]]
+    examples, entries, scores = [], [], []
+    for k in range(n):
+        g = int(rng.integers(len(spans)))
+        a, b = spans[g]
+        text = context[words[a][0]:words[b][1]]
+        q = SimpleNamespace(id=f"q{k}", title=f"t{k % 6}", context=context, answers=((text, words[a][0]),))
+        examples.append(SimpleNamespace(question=q, context=SimpleNamespace(words=words)))
+        entries.append({"spans": spans, "logp": np.log(rng.dirichlet(np.ones(len(spans)))).tolist(),
+                        "em": [int(i == g) for i in range(len(spans))]})
+        scores.append(signal * (np.arange(len(spans)) == g) + (rng.normal(size=len(spans)) if signal else 0.0))
+    return examples, entries, scores
+
+
+RCFG = {"decode_rules": ["map", "mbr"], "mbr_utility": "normalized", "mbr_em_weight": 1.0}
+
+
+def test_heldout_gains_and_counts():
+    pytest.importorskip("torch")
+    out = R.heldout(*heldout_lists(), RCFG, splits=2)
+    assert out["halves"] == 4 and len(out["fits"]) == 4
+    for rule in ("map", "mbr"):
+        for metric in ("exact", "f1"):
+            m = out["rules"][rule][metric]
+            assert len(m["gains"]) == 4 and m["mean"] == pytest.approx(np.mean(m["gains"]))
+            assert m["positive"] == sum(x > 0 for x in m["gains"])
+    assert out["rules"]["map"]["exact"]["mean"] > 5                 # the scores favour the gold, so the verifier helps
+    assert all(f["lambda"] > 0 for f in out["fits"])
+
+
+def test_heldout_with_flat_scores_gains_nothing_under_map():
+    pytest.importorskip("torch")
+    out = R.heldout(*heldout_lists(signal=0.0), RCFG, splits=1)
+    assert out["rules"]["map"]["exact"]["gains"] == [0.0, 0.0]      # distinct cores: T can't move MAP
+
+
+def test_heldout_fits_only_on_the_fit_half(monkeypatch):
+    pytest.importorskip("torch")
+    from squadqa import verifier as V
+
+    sizes, fit = [], V.fit_lambda
+    monkeypatch.setattr(V, "fit_lambda", lambda items: (sizes.append(len(items)), fit(items))[1])
+    R.heldout(*heldout_lists(n=60), RCFG, splits=1)
+    assert sizes == [30, 30]                                        # 3 of the 6 articles, 10 questions each
+
+
+def test_heldout_markdown():
+    m = {"exact": {"mean": 0.234, "positive": 9}, "f1": {"mean": -0.091, "positive": 5}}
+    text = R.heldout_markdown({"r0": {"halves": 10, "rules": {"map": m}}})
+    assert "| r0 | MAP | +0.23 | 9/10 | -0.09 | 5/10 |" in text
