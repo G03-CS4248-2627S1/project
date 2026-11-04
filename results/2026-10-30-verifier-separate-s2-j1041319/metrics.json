@@ -1,0 +1,58 @@
+{
+  "reader": "2026-10-23-row1-joint-s0-j998373",
+  "reader_step": null,
+  "lists": "data/verifier/2026-10-23-row1-joint-s0-j998373",
+  "steps": 4974,
+  "train_minutes_last_job": 85.2,
+  "gpu": "NVIDIA H100 NVL MIG 3g.47gb",
+  "per_device_batch": 16,
+  "peak_gpu_gb_train": 23.4,
+  "validation": {
+    "reader_map": {
+      "exact": 76.90710949662689,
+      "f1": 89.45499725915103,
+      "total": 7708
+    },
+    "reader_mbr": {
+      "exact": 76.95900363258951,
+      "f1": 89.51378729731546,
+      "total": 7708
+    },
+    "verifier_map": {
+      "exact": 75.77841203943954,
+      "f1": 88.34428900737902,
+      "total": 7708
+    },
+    "verifier_mbr": {
+      "exact": 75.83030617540219,
+      "f1": 88.45516426263013,
+      "total": 7708
+    },
+    "combined_map": {
+      "exact": 77.24442138038401,
+      "f1": 89.36292590542695,
+      "total": 7708
+    },
+    "combined_mbr": {
+      "exact": 77.17955371043072,
+      "f1": 89.45492089318881,
+      "total": 7708
+    }
+  },
+  "lambda": 0.7,
+  "lambda_questions": 7209,
+  "temperature": {
+    "combined": 1.7889521910991666,
+    "verifier": 1.0351201696323618
+  },
+  "temperature_at_edge": {
+    "combined": false,
+    "verifier": false
+  },
+  "nll": {
+    "reader": 0.4771401239417344,
+    "verifier": 0.5103267728019583,
+    "combined_at_1": 0.5389788637091701,
+    "combined": 0.45850621772976347
+  }
+}
