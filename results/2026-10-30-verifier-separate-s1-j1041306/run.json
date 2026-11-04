@@ -1,0 +1,11 @@
+{
+  "run_id": "2026-10-30-verifier-separate-s1-j1041306",
+  "experiment": "verifier-separate",
+  "config_file": "configs/experiments/verifier-separate.yaml",
+  "seed": 1,
+  "git_commit": "e201267387375783250af27b55e2361ad4d7153e",
+  "git_dirty": false,
+  "slurm_job_id": "1041306",
+  "host": "xgpi13",
+  "started": "2026-10-30T11:12:48"
+}
