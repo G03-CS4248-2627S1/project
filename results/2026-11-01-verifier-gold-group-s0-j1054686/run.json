@@ -1,0 +1,11 @@
+{
+  "run_id": "2026-11-01-verifier-gold-group-s0-j1054686",
+  "experiment": "verifier-gold-group",
+  "config_file": "configs/experiments/verifier-gold-group.yaml",
+  "seed": 0,
+  "git_commit": "8f994b6453f83422aed4e0a2559eced9a7d731c0",
+  "git_dirty": false,
+  "slurm_job_id": "1054686",
+  "host": "xgpg3",
+  "started": "2026-11-01T17:17:17"
+}

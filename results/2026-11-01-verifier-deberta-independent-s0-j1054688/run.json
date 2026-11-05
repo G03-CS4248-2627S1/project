@@ -1,0 +1,14 @@
+{
+  "run_id": "2026-11-01-verifier-deberta-independent-s0-j1054688",
+  "experiment": "verifier-deberta-independent",
+  "config_file": "configs/experiments/verifier-deberta-independent.yaml",
+  "seed": 0,
+  "git_commit": "8f994b6453f83422aed4e0a2559eced9a7d731c0",
+  "git_dirty": false,
+  "slurm_job_id": "1054688",
+  "host": "xgpg3",
+  "started": "2026-11-01T19:52:57",
+  "resumed": [
+    "2026-11-01T22:53:02"
+  ]
+}
