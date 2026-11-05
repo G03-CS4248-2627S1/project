@@ -145,7 +145,7 @@ These wait on a result, but are short and off the critical path:
 
 - **3.1 Candidate extraction.** Top-k spans per question (k ≈ 10), merged across windows.
 - **3.2 Calibration.** One temperature fit on the validation split; report ECE.
-- **3.3 E1 on the stage-1 models.** {one-hot, F1-soft targets} × {MAP, MBR}, with the γ (F1:EM decoding ratio) and τ sweeps. Ladder row 3 needs no new training.
+- **3.3 E1 on the stage-1 models.** {one-hot, F1-soft targets} × {MAP, MBR}, with the γ (F1:EM decoding ratio) and τ sweeps. Ladder row 3 needs no new training. *γ sweep done 5 Nov (#25): γ stays at 1.*
 - **3.4 Verifier training candidates (critical path).** Sample spans from the final reader's span distribution on its own training questions, at a temperature above 1 (plan §4.3). Check on the validation split that they resemble the reader's real mistakes, and measure top-k recall, the verifier's ceiling. The cross-fitting readers for the E2 ablation (3 folds, on base) are off the critical path.
 - **3.5 Both verifier variants begin** (plan §4.3; spec §5.3–5.4): shared DeBERTa + LoRA, and separate ModernBERT.
 - **3.6 Row 5 reader.** Retrain the frozen reader configuration with AdversarialQA added (plan §4.5), large, 3 seeds.
