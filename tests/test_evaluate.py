@@ -37,6 +37,15 @@ def test_per_question_takes_max_over_gold_answers():
     assert f1["q3"] == pytest.approx(2 / 3)
 
 
+def test_first_reference_scores_against_the_first_answer_alone():
+    preds = {"q1": "Eiffel Tower", "q2": "in 1889", "q3": "France"}
+    assert E.per_question(TINY, preds)[0]["q2"] == 1.0                     # the second gold matches exactly
+    exact, f1 = E.per_question(E.first_reference(TINY), preds)
+    assert exact == {"q1": 1.0, "q2": 0.0, "q3": 0.0}
+    assert f1["q2"] == pytest.approx(2 / 3)                                # "in 1889" against "1889"
+    assert len(TINY[0]["paragraphs"][0]["qas"][1]["answers"]) == 2         # the original is untouched
+
+
 # Unnormalized scoring: the official code without normalize_answer (a diagnostic).
 
 @pytest.mark.parametrize("gold, pred, official, raw", [

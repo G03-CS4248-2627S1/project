@@ -20,7 +20,8 @@ uses per-question scores averaged over each system's runs and resamples question
 interval covers question sampling; the seed spread is the std. A rule names a predictions file: map
 or mbr for a reader, or reader_, verifier_ or combined_ before them for a verifier run. --split scores
 another evaluation set, which needs --final (stage 5 only, workflow.md §6.1); on Adversarial SQuAD
-every score is over the worst-case groups, as in evaluate.metrics.
+every score is over the worst-case groups, as in evaluate.metrics. --first-reference scores against
+each question's first answer alone, the score to set beside validation's one reference.
 
 heldout checks a verifier run's combination on articles it wasn't fitted on: λ and the temperature
 are fitted on half the validation articles and scored on the other half, over random splits, both
@@ -156,29 +157,39 @@ def _stats(values: Sequence[float]) -> dict:
 
 
 def compare(systems: Sequence[tuple[str, str, list[str]]], contrasts: Sequence[str], split: str = "validation",
-            resamples: int = 10_000, final: bool = False) -> dict:
+            resamples: int = 10_000, final: bool = False, first_reference: bool = False) -> dict:
     """Each system's scores over its runs and the contrasts' bootstrap intervals (module docstring)."""
     if len({name for name, _, _ in systems}) != len(systems):
         raise ValueError("system names must differ")
     dataset = E.load_eval_set(split, final)
-    out: dict = {"split": split, "systems": {}, "contrasts": {}}
+    if first_reference:
+        dataset = E.first_reference(dataset)
+    out: dict = {"split": split, "first_reference": first_reference, "systems": {}, "contrasts": {}}
     per: dict[str, dict[str, dict[str, float]]] = {"exact": {}, "f1": {}, "exact_plus_f1": {}}
     for name, rule, runs in systems:
         ems, f1s, rows, reports = [], [], [], []
         for run in runs:
-            em, f1 = E.per_question(dataset, E.load_predictions(RESULTS / run / f"predictions_{split}_{rule}.json"))
-            if split in E.ADVERSARIAL:
+            preds = E.load_predictions(RESULTS / run / f"predictions_{split}_{rule}.json")
+            em, f1 = E.per_question(dataset, preds)
+            row: dict = {"run": run}
+            if split in E.ADVERSARIAL:                       # spec §6 reports these beside the worst case
+                m = E.metrics(split, dataset, preds)
+                row["all_questions"] = {"exact": m["exact"], "f1": m["f1"]}
+                row["original"] = {"exact": m["original"]["exact"], "f1": m["original"]["f1"]}
                 em, f1 = E.adversarial_groups(dataset, em, f1)
             s = E.summarize(em, f1)
             ems.append(em)
             f1s.append(f1)
-            rows.append({"run": run, "exact": s["exact"], "f1": s["f1"]})
+            rows.append({**row, "exact": s["exact"], "f1": s["f1"]})
             path = RESULTS / run / f"report_{split}.json"
             if path.exists():
                 reports.append(json.loads(path.read_text(encoding="utf-8")))
         sys_out = {"rule": rule, "runs": rows,
                    "exact": _stats([r["exact"] for r in rows]), "f1": _stats([r["f1"] for r in rows]),
                    "exact_plus_f1": _stats([r["exact"] + r["f1"] for r in rows])}
+        for key in ("all_questions", "original"):
+            if key in rows[0]:
+                sys_out[key] = {m: _stats([r[key][m] for r in rows]) for m in ("exact", "f1")}
         if reports and len(reports) == len(runs):
             sys_out["report"] = {key: _stats([r[key] for r in reports]) for key in ("temperature", "nll", "ece_map")}
             sys_out["report"]["topk_recall"] = {k: _stats([r["topk_recall"][k] for r in reports])
@@ -195,7 +206,8 @@ def compare(systems: Sequence[tuple[str, str, list[str]]], contrasts: Sequence[s
 
 
 def markdown(result: dict) -> str:
-    """The systems and contrasts as two Markdown tables."""
+    """The systems and contrasts as two Markdown tables, and on Adversarial SQuAD a third with the
+    averages over all questions and over the originals."""
     def ms(s: dict) -> str:
         return f"{s['mean']:.2f} ± {s['std']:.2f}"
 
@@ -208,6 +220,12 @@ def markdown(result: dict) -> str:
         cells = [f"{c[m]['diff']:+.2f} [{c[m]['ci95'][0]:+.2f}, {c[m]['ci95'][1]:+.2f}]"
                  for m in ("exact", "f1", "exact_plus_f1")]
         lines.append(f"| {expr} | " + " | ".join(cells) + " |")
+    if any("all_questions" in s for s in result["systems"].values()):
+        lines += ["", "| System | EM, all questions | F1, all questions | EM, originals | F1, originals |",
+                  "|---|---|---|---|---|"]
+        for name, s in result["systems"].items():
+            a, o = s["all_questions"], s["original"]
+            lines.append(f"| {name} | {ms(a['exact'])} | {ms(a['f1'])} | {ms(o['exact'])} | {ms(o['f1'])} |")
     return "\n".join(lines)
 
 
@@ -309,6 +327,7 @@ def main(argv: list[str] | None = None) -> None:
     cmp_.add_argument("-o", "--out", help="also write the result as JSON here")
     cmp_.add_argument("--split", default="validation", choices=E.EVAL_SETS)
     cmp_.add_argument("--final", action="store_true", help="allow dev and the robustness sets (stage 5 only)")
+    cmp_.add_argument("--first-reference", action="store_true", help="score against each question's first answer alone")
     held = sub.add_parser("heldout", help="a verifier's gain on articles left out of fitting λ and T")
     held.add_argument("runs", nargs="+", metavar="RUN_ID")
     held.add_argument("--lists", help="folder of the candidate lists (default: data/verifier/<reader>)")
@@ -324,7 +343,8 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "heldout":
         print(heldout_markdown({run_id: heldout_run(run_id, args.lists, args.splits) for run_id in args.runs}))
     else:
-        result = compare([parse_system(s) for s in args.systems], args.contrast, args.split, args.resamples, args.final)
+        result = compare([parse_system(s) for s in args.systems], args.contrast, args.split, args.resamples, args.final,
+                         args.first_reference)
         if args.out:
             write_json(Path(args.out), result)
         print(markdown(result))
