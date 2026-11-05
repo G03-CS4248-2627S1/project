@@ -157,6 +157,7 @@ def test_main_trains_resumes_and_scores(variant, unit, tmp_path, monkeypatch, ca
     (tmp_path / "results" / reader_run).mkdir(parents=True)
     (tmp_path / "results" / reader_run / "calibration.json").write_text('{"temperature": 1.3}')
     real_split, real_eval = D.load_split, E.load_eval_set
+    val_questions = real_split("validation")[:30]
     monkeypatch.setattr(Cf, "RESULTS", tmp_path / "results")
     loaded = []                                                         # a fresh reader per job, as on the cluster
     monkeypatch.setattr(P, "load_reader", lambda r, device: (rcfg, tok, loaded.append(copy.deepcopy(reader)) or loaded[-1], 123))
@@ -238,6 +239,79 @@ def test_main_trains_resumes_and_scores(variant, unit, tmp_path, monkeypatch, ca
     assert again.get("temperature") == metrics.get("temperature")
     assert again["steps"] == 3 and again["gpu"] == metrics["gpu"] and set(again["rescored"]) >= {"git_commit", "lists"}
     assert all(json.loads((out / f"predictions_validation_{n}.json").read_text()) == p for n, p in preds.items())
+
+    # Scoring from the checkpoint (#113): nothing is fitted, validation reproduces the saved answers,
+    # and a final set with the same questions gives the same answers and scores.
+    monkeypatch.setattr(V, "fit_lambda", lambda items: pytest.fail("fit_lambda ran while scoring"))
+    monkeypatch.setattr(TV, "fit_temperature_or_edge", lambda items: pytest.fail("a temperature was fitted while scoring"))
+    monkeypatch.setattr(P, "eval_questions", lambda name: val_questions)
+    assert set(TV.score_set(run, "validation")["differ"].values()) == {0}
+    assert json.loads((out / "metrics.json").read_text()) == again      # validation only checks; it writes nothing
+    monkeypatch.setattr(D, "load_squad", lambda path, answers="answers": val_questions)
+    monkeypatch.setattr(E, "load_eval_set", lambda name, final=False: _trim(real_eval("validation"), ids))
+    Cand.main(["--run-id", reader_run, "--split", "dev", "--final", "--chunk", "16", "--batch-size", "8", *unit_set])
+    TV.cli(["--score", run, "--eval-set", "dev", "--final", "--per-device-batch", "24"])
+    after = json.loads((out / "metrics.json").read_text())
+    assert after["dev"] == again["validation"]
+    assert {k: after[k] for k in again} == again                        # λ, T and validation are untouched
+    assert json.loads((out / "verifier_scores_dev.json").read_text()) == scores
+    assert all(json.loads((out / f"predictions_dev_{n}.json").read_text()) == p for n, p in preds.items())
+
+
+def test_score_refuses_final_sets_without_final():
+    with pytest.raises(RuntimeError, match="final scoring"):
+        TV.cli(["--score", "some-run", "--eval-set", "dev"])
+
+
+def _score_with(tmp_path, monkeypatch, metrics, eval_set="dev"):
+    """score_set on _lists()' examples, with the model, its checkpoint and the set's questions stubbed."""
+    from squadqa import config as Cf, data as D, evaluate as E, predict as P
+
+    exs, entries, scores = _lists()
+    rcfg = {"decode_rules": ["map", "mbr"], "mbr_utility": "normalized", "mbr_em_weight": 1.0}
+    run = tmp_path / "results" / "r"
+    run.mkdir(parents=True)
+    (run / "config.yaml").write_text("verifier: {reader: x}\n")
+    (run / "metrics.json").write_text(json.dumps(metrics))
+    ckpt = tmp_path / "scratch" / "runs" / "r" / TV.CHECKPOINT
+    ckpt.parent.mkdir(parents=True)
+    ckpt.touch()
+    monkeypatch.setattr(Cf, "RESULTS", tmp_path / "results")
+    monkeypatch.setenv("SQUADQA_SCRATCH", str(tmp_path / "scratch"))
+    monkeypatch.setattr(TV, "build_verifier", lambda cfg, reader, device: (None, None, rcfg, None, SimpleNamespace(pad_token_id=0), None))
+    monkeypatch.setattr(TV, "load_checkpoint", lambda path, v: 5)
+    monkeypatch.setattr(P, "eval_questions", lambda name: [])
+    monkeypatch.setattr(D, "featurize", lambda questions, tok, cfg, training: SimpleNamespace(examples=exs))
+    monkeypatch.setattr(TV, "load_lists", lambda folder, name: {ex.question.id: e for ex, e in zip(exs, entries)})
+    monkeypatch.setattr(TV, "score_lists", lambda *a: scores)
+    monkeypatch.setattr(E, "load_eval_set", lambda name, final=False: [])
+    monkeypatch.setattr(E, "metrics", lambda name, dataset, preds: {"answers": len(preds)})
+    monkeypatch.setattr(TV.V, "fit_lambda", lambda items: pytest.fail("fit_lambda ran while scoring"))
+    monkeypatch.setattr(TV, "fit_temperature_or_edge", lambda items: pytest.fail("a temperature was fitted while scoring"))
+    result = TV.score_set("r", eval_set, True)
+    rounded = [np.array([round(float(x), 6) for x in s]) for s in scores]
+    return result, run, exs, entries, rounded, rcfg
+
+
+def test_score_set_applies_the_runs_lambda_and_temperatures(tmp_path, monkeypatch):
+    metrics = {"lambda": 1.7, "temperature": {"combined": 2.5, "verifier": 0.7}}
+    _, run, exs, entries, scores, rcfg = _score_with(tmp_path, monkeypatch, metrics)
+    want = TV.decode_predictions(exs, entries, scores, rcfg, 1.7, 2.5, 0.7)
+    for name, answers in want.items():
+        assert json.loads((run / f"predictions_dev_{name}.json").read_text()) == answers
+    # The data must let these values matter, or this test proves nothing.
+    assert want["combined_mbr"] != TV.decode_predictions(exs, entries, scores, rcfg, 1.7, 0.7, 0.7)["combined_mbr"]
+    assert want["combined_map"] != TV.decode_predictions(exs, entries, scores, rcfg, 0.1, 2.5, 0.7)["combined_map"]
+    assert want["verifier_mbr"] != TV.decode_predictions(exs, entries, scores, rcfg, 1.7, 2.5, 2.5)["verifier_mbr"]
+    saved = json.loads((run / "metrics.json").read_text())
+    assert saved["lambda"] == 1.7 and saved["temperature"] == metrics["temperature"] and saved["dev"]["combined_map"] == {"answers": len(exs)}
+
+
+def test_score_set_without_fitted_temperatures_is_the_reader_alone(tmp_path, monkeypatch, capsys):
+    _, run, exs, entries, scores, rcfg = _score_with(tmp_path, monkeypatch, {"lambda": 0.0})
+    assert "fitted no temperatures" in capsys.readouterr().out
+    want = TV.decode_predictions(exs, entries, scores, rcfg, 0.0, 1.0, 1.0)
+    assert json.loads((run / "predictions_dev_combined_mbr.json").read_text()) == want["combined_mbr"] == want["reader_mbr"]
 
 
 def test_rescore_refuses_other_lists(tmp_path, monkeypatch):

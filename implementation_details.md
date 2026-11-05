@@ -420,6 +420,7 @@ Not the default: the default candidates are sampled from the final reader (§5.1
   - *No change:* reader and verifier answers are equal after normalization.
   - *Boundary fix:* the answers overlap but differ after normalization.
   - *Answer switch:* the answers do not overlap.
+- **Final scoring of a verifier** (#113): `python -m squadqa.candidates --split <set> --final` builds the reader's top-k lists for the set, then `python -m squadqa.train_verifier --score <run_id> --eval-set <set> --final` scores them from the verifier's checkpoint and decodes with the λ and temperatures fitted on validation. Nothing is fitted on a final set (rule 1). `--eval-set validation` checks the path against the run's saved predictions and writes nothing.
 - Report per-seed results, mean ± std over 3 seeds, and paired bootstrap 95% confidence intervals for headline differences.
   - `python -m squadqa.report compare` does both for systems (a decoding rule over a config's seeds) and for contrasts, signed sums of systems such as `B-A` or the interaction `D+A-B-C`. A contrast's interval comes from resampling questions, on per-question scores averaged over each system's seeds; the seed spread is the std.
 - **Calibration and top-k recall per run** (`python -m squadqa.report run <run_id>`, decode-only, from the run's saved candidates; writes `results/<run_id>/report_<split>.json`):

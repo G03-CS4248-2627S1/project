@@ -6,6 +6,7 @@
 # The reader run needs results/<run_id>/ (config.yaml, calibration.json) in the clone and its checkpoint in
 # $SQUADQA_SCRATCH/runs/<run_id>/. Writes data/verifier/<run_id>/candidates_<split>.json and
 # summary_<split>.json in the clone (gitignored, since the lists are large); nothing goes to results/.
+# Final sets (stage 5 only, workflow.md §6.1): --split dev --final, for squadqa.train_verifier --score.
 # Other sources (training lists only): add --source adversarialqa or --source squad2-unanswerable.
 # Validation (7,708 questions) is one reader pass; train (79,577) about ten times that, in chunks of 4,096.
 # The log goes to logs/<job name>-<job id>.out. Partitions: gpu (up to 3 hours) or gpu-long (up to 3 days).
