@@ -436,10 +436,10 @@ def write_evaluation(run_dir: Path, examples: list[D.Example], entries: list[dic
     return metrics
 
 
-def rescore(run_id: str, lists: str | None = None) -> dict:
-    """Re-run the validation evaluation of a finished verifier run from its saved scores: no model,
-    no GPU, only the reader's tokenizer for the windows. The training entries of metrics.json are
-    kept; the evaluation's are replaced, and "rescored" records the commit that did it."""
+def load_finished(run_id: str, lists: str | None = None) -> tuple[dict, Path, list[D.Example], list[dict], list[np.ndarray]]:
+    """A finished verifier run's reader config, lists folder, validation examples, lists and saved
+    scores: no model, no GPU, only the reader's tokenizer for the windows. Raises if the scores don't
+    belong to the lists."""
     import yaml
     from squadqa import predict as P
 
@@ -460,6 +460,15 @@ def rescore(run_id: str, lists: str | None = None) -> dict:
     scores = [np.array(saved[ex.question.id], dtype=np.float64) for ex in examples]
     if any(len(s) != len(e["spans"]) for s, e in zip(scores, entries)):
         raise RuntimeError(f"{SCORES} doesn't match the lists in {folder}: other lists than the run scored")
+    return rcfg, folder, examples, entries, scores
+
+
+def rescore(run_id: str, lists: str | None = None) -> dict:
+    """Re-run the validation evaluation of a finished verifier run from its saved scores. The training
+    entries of metrics.json are kept; the evaluation's are replaced, and "rescored" records the commit
+    that did it."""
+    run_dir = C.RESULTS / run_id
+    rcfg, folder, examples, entries, scores = load_finished(run_id, lists)
     old = json.loads((run_dir / "metrics.json").read_text(encoding="utf-8"))
     keep = {k: v for k, v in old.items() if k not in ("validation", "lambda", "lambda_questions", "temperature",
                                                       "temperature_at_edge", "nll", "rescored")}
