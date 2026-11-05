@@ -1,0 +1,1059 @@
+{
+  "reader": "2026-10-23-row1-joint-s0-j998373",
+  "runs": [
+    "2026-10-29-verifier-separate-s0-j1032972",
+    "2026-10-30-verifier-separate-s1-j1041306",
+    "2026-10-30-verifier-separate-s2-j1041319"
+  ],
+  "questions": 7708,
+  "rules": {
+    "map": {
+      "kinds": {
+        "longer": {
+          "changed": {
+            "mean": 104.66666666666667,
+            "std": 7.023769168568492
+          },
+          "em_gained": {
+            "mean": 53.333333333333336,
+            "std": 6.027713773341708
+          },
+          "em_lost": {
+            "mean": 30.666666666666668,
+            "std": 1.5275252316519465
+          },
+          "f1_better": {
+            "mean": 62.333333333333336,
+            "std": 5.507570547286102
+          },
+          "f1_worse": {
+            "mean": 39.333333333333336,
+            "std": 1.5275252316519465
+          },
+          "contribution": {
+            "exact": {
+              "diff": 0.29406677045493856,
+              "ci95": [
+                0.09513924926483308,
+                0.49731880297526376
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "f1": {
+              "diff": 0.08125764414689388,
+              "ci95": [
+                0.017640429978638506,
+                0.1459300314318702
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "exact_plus_f1": {
+              "diff": 0.37532441460183247,
+              "ci95": [
+                0.11776760189602128,
+                0.6360020219990216
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            }
+          }
+        },
+        "shorter": {
+          "changed": {
+            "mean": 177.33333333333334,
+            "std": 14.047538337136984
+          },
+          "em_gained": {
+            "mean": 61.0,
+            "std": 2.6457513110645907
+          },
+          "em_lost": {
+            "mean": 61.666666666666664,
+            "std": 7.094598884597588
+          },
+          "f1_better": {
+            "mean": 71.66666666666667,
+            "std": 3.511884584284246
+          },
+          "f1_worse": {
+            "mean": 97.33333333333333,
+            "std": 9.60902353693305
+          },
+          "contribution": {
+            "exact": {
+              "diff": -0.008649022660439373,
+              "ci95": [
+                -0.26811970247362044,
+                0.24649714582252205
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "f1": {
+              "diff": -0.1663655610949221,
+              "ci95": [
+                -0.28310560478290236,
+                -0.05188479976484845
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "exact_plus_f1": {
+              "diff": -0.17501458375536158,
+              "ci95": [
+                -0.5347290307047667,
+                0.17737866071528433
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            }
+          }
+        },
+        "crossing": {
+          "changed": {
+            "mean": 1.3333333333333333,
+            "std": 0.5773502691896257
+          },
+          "em_gained": {
+            "mean": 0.0,
+            "std": 0.0
+          },
+          "em_lost": {
+            "mean": 0.0,
+            "std": 0.0
+          },
+          "f1_better": {
+            "mean": 1.3333333333333333,
+            "std": 0.5773502691896257
+          },
+          "f1_worse": {
+            "mean": 0.0,
+            "std": 0.0
+          },
+          "contribution": {
+            "exact": {
+              "diff": 0.0,
+              "ci95": [
+                0.0,
+                0.0
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "f1": {
+              "diff": 0.0064316402842036465,
+              "ci95": [
+                0.0,
+                0.018430018586567003
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "exact_plus_f1": {
+              "diff": 0.0064316402842036465,
+              "ci95": [
+                0.0,
+                0.018430018586567003
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            }
+          }
+        },
+        "switch": {
+          "changed": {
+            "mean": 52.333333333333336,
+            "std": 5.033222956847167
+          },
+          "em_gained": {
+            "mean": 16.333333333333332,
+            "std": 3.0550504633038935
+          },
+          "em_lost": {
+            "mean": 18.0,
+            "std": 0.0
+          },
+          "f1_better": {
+            "mean": 27.0,
+            "std": 4.358898943540674
+          },
+          "f1_worse": {
+            "mean": 22.0,
+            "std": 1.0
+          },
+          "contribution": {
+            "exact": {
+              "diff": -0.021622556651098433,
+              "ci95": [
+                -0.15135789655768897,
+                0.10811278325549212
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "f1": {
+              "diff": -0.007593090347568428,
+              "ci95": [
+                -0.1287494649969365,
+                0.11045998399938697
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "exact_plus_f1": {
+              "diff": -0.029215646998666855,
+              "ci95": [
+                -0.27218415854416944,
+                0.20974464491427366
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            }
+          }
+        },
+        "boundary": {
+          "changed": {
+            "mean": 283.3333333333333,
+            "std": 11.930353445448853
+          },
+          "em_gained": {
+            "mean": 114.33333333333333,
+            "std": 4.618802153517006
+          },
+          "em_lost": {
+            "mean": 92.33333333333333,
+            "std": 6.506407098647712
+          },
+          "f1_better": {
+            "mean": 135.33333333333334,
+            "std": 4.618802153517007
+          },
+          "f1_worse": {
+            "mean": 136.66666666666666,
+            "std": 8.504900548115382
+          },
+          "contribution": {
+            "exact": {
+              "diff": 0.28541774779449924,
+              "ci95": [
+                -0.034596090641757477,
+                0.6054315862307559
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "f1": {
+              "diff": -0.07867627666382458,
+              "ci95": [
+                -0.2130953682877358,
+                0.05192326491299734
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "exact_plus_f1": {
+              "diff": 0.20674147113067454,
+              "ci95": [
+                -0.22661944567605546,
+                0.6358287305531727
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            }
+          }
+        },
+        "all": {
+          "changed": {
+            "mean": 335.6666666666667,
+            "std": 15.947831618540913
+          },
+          "em_gained": {
+            "mean": 130.66666666666666,
+            "std": 5.033222956847166
+          },
+          "em_lost": {
+            "mean": 110.33333333333333,
+            "std": 6.506407098647712
+          },
+          "f1_better": {
+            "mean": 162.33333333333334,
+            "std": 4.932882862316247
+          },
+          "f1_worse": {
+            "mean": 158.66666666666666,
+            "std": 8.020806277010642
+          },
+          "contribution": {
+            "exact": {
+              "diff": 0.2637951911434008,
+              "ci95": [
+                -0.07784120394395433,
+                0.605431586230756
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "f1": {
+              "diff": -0.08626936701139297,
+              "ci95": [
+                -0.2689812887025402,
+                0.08826641550891659
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "exact_plus_f1": {
+              "diff": 0.17752582413200776,
+              "ci95": [
+                -0.3237331507378395,
+                0.6697106626671409
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            }
+          }
+        }
+      },
+      "by_reader_top1": {
+        "< 0.5": {
+          "questions": 2351,
+          "changed": {
+            "mean": 289.3333333333333,
+            "std": 14.0118997046558
+          },
+          "em_gained": {
+            "mean": 105.33333333333333,
+            "std": 4.509249752822894
+          },
+          "em_lost": {
+            "mean": 93.66666666666667,
+            "std": 2.8867513459481287
+          },
+          "contribution": {
+            "exact": {
+              "diff": 0.15135789655768903,
+              "ci95": [
+                -0.1643314305483481,
+                0.467047223663726
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "f1": {
+              "diff": -0.11670883145505413,
+              "ci95": [
+                -0.2894475568720127,
+                0.04733391839106859
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "exact_plus_f1": {
+              "diff": 0.034649065102634845,
+              "ci95": [
+                -0.4227694714971332,
+                0.48887171679990854
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            }
+          }
+        },
+        "0.5-0.9": {
+          "questions": 3688,
+          "changed": {
+            "mean": 46.333333333333336,
+            "std": 3.0550504633038935
+          },
+          "em_gained": {
+            "mean": 25.333333333333332,
+            "std": 4.041451884327381
+          },
+          "em_lost": {
+            "mean": 16.666666666666668,
+            "std": 4.163331998932266
+          },
+          "contribution": {
+            "exact": {
+              "diff": 0.1124372945857118,
+              "ci95": [
+                -0.025947067981318118,
+                0.2551461684829614
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "f1": {
+              "diff": 0.030439464443661104,
+              "ci95": [
+                -0.027319483558766282,
+                0.0884009333488699
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "exact_plus_f1": {
+              "diff": 0.14287675902937294,
+              "ci95": [
+                -0.05106499780412824,
+                0.3385486685616703
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            }
+          }
+        },
+        "> 0.9": {
+          "questions": 1669,
+          "changed": {
+            "mean": 0.0,
+            "std": 0.0
+          },
+          "em_gained": {
+            "mean": 0.0,
+            "std": 0.0
+          },
+          "em_lost": {
+            "mean": 0.0,
+            "std": 0.0
+          },
+          "contribution": {
+            "exact": {
+              "diff": 0.0,
+              "ci95": [
+                0.0,
+                0.0
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "f1": {
+              "diff": 0.0,
+              "ci95": [
+                0.0,
+                0.0
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "exact_plus_f1": {
+              "diff": 0.0,
+              "ci95": [
+                0.0,
+                0.0
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            }
+          }
+        }
+      }
+    },
+    "mbr": {
+      "kinds": {
+        "longer": {
+          "changed": {
+            "mean": 109.33333333333333,
+            "std": 7.023769168568492
+          },
+          "em_gained": {
+            "mean": 55.0,
+            "std": 4.58257569495584
+          },
+          "em_lost": {
+            "mean": 30.666666666666668,
+            "std": 3.2145502536643185
+          },
+          "f1_better": {
+            "mean": 68.33333333333333,
+            "std": 6.027713773341707
+          },
+          "f1_worse": {
+            "mean": 38.666666666666664,
+            "std": 1.5275252316519465
+          },
+          "contribution": {
+            "exact": {
+              "diff": 0.315689327106037,
+              "ci95": [
+                0.11243729458571179,
+                0.5189413596263622
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "f1": {
+              "diff": 0.12215580547462186,
+              "ci95": [
+                0.052877471580050725,
+                0.19212690140611735
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "exact_plus_f1": {
+              "diff": 0.4378451325806589,
+              "ci95": [
+                0.1718299110380764,
+                0.7058762583342804
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            }
+          }
+        },
+        "shorter": {
+          "changed": {
+            "mean": 180.0,
+            "std": 13.114877048604
+          },
+          "em_gained": {
+            "mean": 57.333333333333336,
+            "std": 3.214550253664318
+          },
+          "em_lost": {
+            "mean": 66.0,
+            "std": 6.082762530298219
+          },
+          "f1_better": {
+            "mean": 70.66666666666667,
+            "std": 3.7859388972001824
+          },
+          "f1_worse": {
+            "mean": 102.33333333333333,
+            "std": 9.814954576223638
+          },
+          "contribution": {
+            "exact": {
+              "diff": -0.11243729458571178,
+              "ci95": [
+                -0.3719079743988929,
+                0.14270887389724965
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "f1": {
+              "diff": -0.19880163738240986,
+              "ci95": [
+                -0.3176212019767825,
+                -0.08473374717334908
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "exact_plus_f1": {
+              "diff": -0.3112389319681217,
+              "ci95": [
+                -0.6706873343383313,
+                0.04492527067606115
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            }
+          }
+        },
+        "crossing": {
+          "changed": {
+            "mean": 3.0,
+            "std": 0.0
+          },
+          "em_gained": {
+            "mean": 0.0,
+            "std": 0.0
+          },
+          "em_lost": {
+            "mean": 0.0,
+            "std": 0.0
+          },
+          "f1_better": {
+            "mean": 3.0,
+            "std": 0.0
+          },
+          "f1_worse": {
+            "mean": 0.0,
+            "std": 0.0
+          },
+          "contribution": {
+            "exact": {
+              "diff": 0.0,
+              "ci95": [
+                0.0,
+                0.0
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "f1": {
+              "diff": 0.013888739771123277,
+              "ci95": [
+                0.0011532030213919156,
+                0.03112734117523499
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "exact_plus_f1": {
+              "diff": 0.013888739771123277,
+              "ci95": [
+                0.0011532030213919156,
+                0.03112734117523499
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            }
+          }
+        },
+        "switch": {
+          "changed": {
+            "mean": 48.666666666666664,
+            "std": 3.511884584284246
+          },
+          "em_gained": {
+            "mean": 16.333333333333332,
+            "std": 1.1547005383792515
+          },
+          "em_lost": {
+            "mean": 18.0,
+            "std": 2.0
+          },
+          "f1_better": {
+            "mean": 25.0,
+            "std": 1.0
+          },
+          "f1_worse": {
+            "mean": 20.666666666666668,
+            "std": 3.7859388972001824
+          },
+          "contribution": {
+            "exact": {
+              "diff": -0.021622556651098412,
+              "ci95": [
+                -0.15135789655768897,
+                0.10389638470852637
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "f1": {
+              "diff": 0.009146875557632909,
+              "ci95": [
+                -0.10973439534197646,
+                0.12706893770818947
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "exact_plus_f1": {
+              "diff": -0.012475681093465496,
+              "ci95": [
+                -0.2497325375030738,
+                0.225962045554562
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            }
+          }
+        },
+        "boundary": {
+          "changed": {
+            "mean": 292.3333333333333,
+            "std": 11.015141094572202
+          },
+          "em_gained": {
+            "mean": 112.33333333333333,
+            "std": 5.686240703077327
+          },
+          "em_lost": {
+            "mean": 96.66666666666667,
+            "std": 5.033222956847166
+          },
+          "f1_better": {
+            "mean": 142.0,
+            "std": 7.0
+          },
+          "f1_worse": {
+            "mean": 141.0,
+            "std": 8.717797887081348
+          },
+          "contribution": {
+            "exact": {
+              "diff": 0.20325203252032517,
+              "ci95": [
+                -0.12973533990659053,
+                0.5275903822868017
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "f1": {
+              "diff": -0.06275709213666471,
+              "ci95": [
+                -0.2022958056553543,
+                0.07392587954101307
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "exact_plus_f1": {
+              "diff": 0.14049494038366048,
+              "ci95": [
+                -0.3090071462431631,
+                0.5831193058909834
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            }
+          }
+        },
+        "all": {
+          "changed": {
+            "mean": 341.0,
+            "std": 11.532562594670797
+          },
+          "em_gained": {
+            "mean": 128.66666666666666,
+            "std": 5.507570547286101
+          },
+          "em_lost": {
+            "mean": 114.66666666666667,
+            "std": 4.618802153517006
+          },
+          "f1_better": {
+            "mean": 167.0,
+            "std": 7.211102550927978
+          },
+          "f1_worse": {
+            "mean": 161.66666666666666,
+            "std": 5.131601439446884
+          },
+          "contribution": {
+            "exact": {
+              "diff": 0.18162947586922676,
+              "ci95": [
+                -0.17298045320878735,
+                0.5275903822868016
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "f1": {
+              "diff": -0.05361021657903179,
+              "ci95": [
+                -0.2335689836011883,
+                0.12365605548290957
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "exact_plus_f1": {
+              "diff": 0.12801925929019506,
+              "ci95": [
+                -0.38005715677848,
+                0.6326283692900687
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            }
+          }
+        }
+      },
+      "by_reader_top1": {
+        "< 0.5": {
+          "questions": 2351,
+          "changed": {
+            "mean": 295.6666666666667,
+            "std": 8.962886439832502
+          },
+          "em_gained": {
+            "mean": 103.33333333333333,
+            "std": 4.163331998932265
+          },
+          "em_lost": {
+            "mean": 98.66666666666667,
+            "std": 3.214550253664318
+          },
+          "contribution": {
+            "exact": {
+              "diff": 0.060543158623075605,
+              "ci95": [
+                -0.26379519114340083,
+                0.38055699705933227
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "f1": {
+              "diff": -0.08662379490972842,
+              "ci95": [
+                -0.25898908306014584,
+                0.07961106577095063
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "exact_plus_f1": {
+              "diff": -0.02608063628665285,
+              "ci95": [
+                -0.49582641324329313,
+                0.4334893685764452
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            }
+          }
+        },
+        "0.5-0.9": {
+          "questions": 3688,
+          "changed": {
+            "mean": 45.333333333333336,
+            "std": 3.0550504633038935
+          },
+          "em_gained": {
+            "mean": 25.333333333333332,
+            "std": 4.041451884327381
+          },
+          "em_lost": {
+            "mean": 16.0,
+            "std": 3.605551275463989
+          },
+          "contribution": {
+            "exact": {
+              "diff": 0.12108631724615118,
+              "ci95": [
+                -0.017298045320878745,
+                0.2637951911434008
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "f1": {
+              "diff": 0.03301357833069664,
+              "ci95": [
+                -0.024810130917845088,
+                0.09190804264852118
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "exact_plus_f1": {
+              "diff": 0.1540998955768478,
+              "ci95": [
+                -0.036386161793276924,
+                0.35101731015688276
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            }
+          }
+        },
+        "> 0.9": {
+          "questions": 1669,
+          "changed": {
+            "mean": 0.0,
+            "std": 0.0
+          },
+          "em_gained": {
+            "mean": 0.0,
+            "std": 0.0
+          },
+          "em_lost": {
+            "mean": 0.0,
+            "std": 0.0
+          },
+          "contribution": {
+            "exact": {
+              "diff": 0.0,
+              "ci95": [
+                0.0,
+                0.0
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "f1": {
+              "diff": 0.0,
+              "ci95": [
+                0.0,
+                0.0
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            },
+            "exact_plus_f1": {
+              "diff": 0.0,
+              "ci95": [
+                0.0,
+                0.0
+              ],
+              "n": 7708,
+              "resamples": 10000,
+              "seed": 0
+            }
+          }
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "kind": "longer",
+      "effect": "gain",
+      "id": "56ddb53b66d3e219004daca5",
+      "question": "What is the ultimate aim of the Wayback Machine?",
+      "gold": "to archive the entire Internet",
+      "reader": "archive the entire Internet",
+      "combined": "to archive the entire Internet",
+      "top1": 0.26,
+      "passage": "tes can also be captured on the fly by visitors who are offered a link to do so. The intent is to capture and archive content that otherwise would be lost whenever a site is changed or closed down. Their grand vision is to archive the entire Internet."
+    },
+    {
+      "kind": "longer",
+      "effect": "loss",
+      "id": "56ddb46c9a695914005b9590",
+      "question": "Where is Internet Archive headquartered?",
+      "gold": "San Francisco",
+      "reader": "San Francisco",
+      "combined": "San Francisco, California",
+      "top1": 0.402,
+      "passage": "The Wayback Machine is a digital archive of the World Wide Web and other information on the Internet created by the Internet Archive, a nonprofit organization, based in San Francisco, California, United States. It was set up by Brewster Kahle and Bruce Gilliat, and is maintained with content from Alexa Internet. The service enables users to see archived versions of web pages across time, which the a"
+    },
+    {
+      "kind": "shorter",
+      "effect": "gain",
+      "id": "56ddd22366d3e219004dad01",
+      "question": "Who was the actual party that requested the critical sites be taken down?",
+      "gold": "Church of Scientology",
+      "reader": "lawyers from the Church of Scientology",
+      "combined": "the Church of Scientology",
+      "top1": 0.516,
+      "passage": "Archive removed various sites that were critical of Scientology from the Wayback Machine. An error message stated that this was in response to a \"request by the site owner.\" Later, it was clarified that lawyers from the Church of Scientology had demanded the removal and that the site owners did not want their material removed."
+    },
+    {
+      "kind": "shorter",
+      "effect": "loss",
+      "id": "56ddc6e266d3e219004daceb",
+      "question": "Which judge presided over the Netbula v. Chordiant case?",
+      "gold": "Magistrate Judge Howard Lloyd",
+      "reader": "Magistrate Judge Howard Lloyd",
+      "combined": "Howard Lloyd",
+      "top1": 0.468,
+      "passage": "Magistrate Judge Howard Lloyd in the Northern District of California, San Jose Division, rejected Netbula's arguments and ordered them to disable the robots.txt blockage temporarily in order to allow Chordiant to retrieve the archived pages that the"
+    },
+    {
+      "kind": "switch",
+      "effect": "gain",
+      "id": "56df2305c65bf219000b3f97",
+      "question": "What label did NBC sell in 1986?",
+      "gold": "RCA",
+      "reader": "Ariola Records",
+      "combined": "RCA",
+      "top1": 0.322,
+      "passage": "By 1987, CBS was the only \"big three\" American TV network to have a co-owned record company. ABC had sold its record division to MCA Records in 1979, and in 1986, NBC's parent company RCA was sold to General Electric, who then sold off all other RCA units, including the record division (which was bought by Ariola Records, later known as BMG)."
+    },
+    {
+      "kind": "switch",
+      "effect": "loss",
+      "id": "56df24783277331400b4d99e",
+      "question": "What company did Barry Weiss move to?",
+      "gold": "Island Def Jam and Universal Republic",
+      "reader": "Island Def Jam and Universal Republic",
+      "combined": "Universal Music Group",
+      "top1": 0.326,
+      "passage": "RCA/Jive Label Group CEO Barry Weiss left the company in March 2011 to become the new CEO of Island Def Jam and Universal Republic, which were both part of Universal Music Group. Weiss had been the RCA/Jive Label Group CEO since 2008 and was head of Jive Records since 1991."
+    }
+  ],
+  "error_overlap_map": {
+    "reader vs separate verifier alone (3 seeds)": {
+      "both_right": 72.14582252205501,
+      "a_only": 4.761286974571874,
+      "b_only": 3.70178169866805,
+      "both_wrong": 19.391108804705066,
+      "b_right_when_a_wrong": 16.02996254681648,
+      "a_right_when_b_wrong": 19.712533221113787,
+      "phi": 0.7658375441350319
+    },
+    "reader vs shared verifier alone (seed 0, its own lists)": {
+      "both_right": 74.80539699014011,
+      "a_only": 2.088738972496108,
+      "b_only": 1.8292682926829267,
+      "both_wrong": 21.27659574468085,
+      "b_right_when_a_wrong": 7.916900617630544,
+      "a_right_when_b_wrong": 8.939478067740145,
+      "phi": 0.8901944535797741
+    },
+    "reader seed 0 vs reader seeds 1, 2": {
+      "both_right": 74.32537623248572,
+      "a_only": 2.633627400103788,
+      "b_only": 2.6530877010897767,
+      "both_wrong": 20.387908666320705,
+      "b_right_when_a_wrong": 11.51463963963964,
+      "a_right_when_b_wrong": 11.439952109044022,
+      "phi": 0.8508836681484389
+    },
+    "separate verifier seed 0 vs seeds 1, 2": {
+      "both_right": 72.76206538661131,
+      "a_only": 3.0293201868188895,
+      "b_only": 3.113648157758173,
+      "both_wrong": 21.094966268811625,
+      "b_right_when_a_wrong": 12.861736334405146,
+      "a_right_when_b_wrong": 12.554631944388209,
+      "phi": 0.8324135109983377
+    }
+  }
+}
