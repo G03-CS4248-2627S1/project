@@ -1,6 +1,6 @@
 #!/bin/bash
 # The tables of final scoring (#115): each system's mean ± std over its seeds and the contrasts' paired bootstrap
-# intervals, on each final set, and on dev against the first reference alone. CPU only, from results/, so run it
+# intervals, on validation, each final set, and dev against the first reference alone. CPU only, from results/, so run it
 # anywhere that has the runs' predictions and data/external. Writes reports/final_scoring/<set>.json and tables.md.
 #   bash slurm/final_report.sh            # PYTHON=<interpreter> to use another one
 #
@@ -33,6 +33,7 @@ score() {  # score <title> <json name> <compare options...>
     printf '\n'
   } >> "$out/tables.md"
 }
+score "validation, one reference" validation --split validation
 score "dev, all references" dev --split dev
 score "dev, first reference only" dev-first-reference --split dev --first-reference
 score "AddSent, worst case over each question's versions" addsent --split addsent

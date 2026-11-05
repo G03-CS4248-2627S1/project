@@ -4,18 +4,20 @@ Issue #116, plan E2, spec §6. Ladder row 4 (separate ModernBERT-large, verifier
 
 Fix types are spec §6's: **no change** (equal after the official normalization), **boundary fix** (the spans overlap but the answers differ: longer, shorter or crossing), and **answer switch** (the spans don't overlap).
 
+The numbers were regenerated after a decoding fix (`decode.answer_groups`, #115): on a verifier list, each answer had taken its group's earliest-starting variant, not its most probable one. The story below didn't change.
+
 ## Findings
 
-Under MAP unless stated. Row 4's total is +0.26 EM [−0.08, +0.61], −0.09 F1 [−0.27, +0.09] (#112).
+Under MAP unless stated. Row 4's total is +0.28 EM [−0.07, +0.62], −0.08 F1 [−0.27, +0.09].
 
-1. **The verifier mostly edits boundaries.** It changes 335.7 answers (4.4% of questions). Of these, 283.3 (84%) are boundary fixes and 52.3 (16%) are answer switches.
-2. **Its EM gain comes from lengthening answers.** Longer answers give +0.29 EM [+0.10, +0.50] and +0.08 F1 [+0.02, +0.15]: EM gained on 53.3 questions and lost on 30.7. This is the same kind of gain MBR makes on row 1 (#108).
-3. **Its F1 loss comes from shortening them.** Shorter answers give −0.17 F1 [−0.28, −0.05] and −0.01 EM [−0.27, +0.25]. They are the most common change (177.3), with EM gains and losses in balance (61.0 and 61.7). So the verifier is not simply better at boundaries: it prefers one direction that pays and another that costs.
+1. **The verifier mostly edits boundaries.** It changes 337.7 answers (4.4% of questions). Of these, 285.3 (85%) are boundary fixes and 52.3 (15%) are answer switches.
+2. **Its EM gain comes from lengthening answers.** Longer answers give +0.31 EM [+0.11, +0.52] and +0.08 F1 [+0.02, +0.15]: EM gained on 54.3 questions and lost on 30.3. This is the same kind of gain MBR makes on row 1 (#108).
+3. **Its F1 loss comes from shortening them.** Shorter answers give −0.17 F1 [−0.28, −0.05] and −0.00 EM [−0.26, +0.25]. They are the most common change (178.0), with EM gains and losses in balance (61.0 and 61.3). So the verifier is not simply better at boundaries: it prefers one direction that pays and another that costs.
 4. **Switching answers, its intended job, nets to zero.** Answer switches give −0.03 EM + F1 [−0.27, +0.21], with EM gained on 16.3 questions and lost on 18.0. The plan's motivating case, a date attached to the wrong event, does occur (first example of a gain below), but it is cancelled by switches away from correct answers.
-5. **The verifier acts only on uncertain answers.** No answer with a reader top-1 probability above 0.9 changes, and 86% of the changes are below 0.5. Those give +0.03 EM + F1 [−0.42, +0.49], while the 46.3 changes at 0.5–0.9 give +0.14 [−0.05, +0.34].
-6. **The separate encoder does make less correlated errors, as E2 hoped, but that didn't translate into a gain.** The correlation of EM errors with the reader is φ 0.77 for the separate verifier alone, against 0.89 for the shared one and 0.85 between two reader seeds. When the reader is wrong, the separate verifier alone is right on 16.0% of those questions, against 7.9% for the shared one. But when the verifier is wrong, the reader is right on 19.7%, so combining them gives back about what it gains.
+5. **The verifier acts only on uncertain answers.** No answer with a reader top-1 probability above 0.9 changes, and 86% of the changes are below 0.5. Those give +0.05 EM + F1 [−0.41, +0.50], while the 46.3 changes at 0.5–0.9 give +0.14 [−0.05, +0.34].
+6. **The separate encoder does make less correlated errors, as E2 hoped, but that didn't translate into a gain.** The correlation of EM errors with the reader is φ 0.77 for the separate verifier alone, against 0.89 for the shared one and 0.85 between two reader seeds. When the reader is wrong, the separate verifier alone is right on 16.1% of those questions, against 7.9% for the shared one. But when the verifier is wrong, the reader is right on 19.7%, so combining them gives back about what it gains.
 
-MBR tells the same story: longer +0.44 EM + F1 [+0.17, +0.71], shorter −0.31 [−0.67, +0.04], switches −0.01 [−0.25, +0.23].
+MBR tells the same story: longer +0.46 EM + F1 [+0.19, +0.73], shorter −0.31 [−0.66, +0.05], switches −0.01 [−0.25, +0.23].
 
 ## Limits
 
@@ -31,7 +33,7 @@ MBR tells the same story: longer +0.44 EM + F1 [+0.17, +0.71], shorter −0.31 [
 |---|---|---|---|---|---|---|
 | Switch | EM gained | What label did NBC sell in 1986? | Ariola Records | RCA | RCA | A real fix. The passage says RCA's record division was sold and Ariola bought it, so the reader took the buyer. |
 | Switch | EM lost | What company did Barry Weiss move to? | Island Def Jam and Universal Republic | Universal Music Group | Island Def Jam and Universal Republic | A real error. The verifier chose the parent company named in the same sentence. |
-| Shorter | EM gained | Who was the actual party that requested the critical sites be taken down? | lawyers from the Church of Scientology | the Church of Scientology | Church of Scientology | A plausible fix, though "lawyers from" is arguably also right. |
+| Shorter | EM gained | Who was the actual party that requested the critical sites be taken down? | lawyers from the Church of Scientology | Church of Scientology | Church of Scientology | A plausible fix, though "lawyers from" is arguably also right. |
 | Shorter | EM lost | Which judge presided over the Netbula v. Chordiant case? | Magistrate Judge Howard Lloyd | Howard Lloyd | Magistrate Judge Howard Lloyd | Both are correct. It lost EM to the annotated boundary only. |
 | Longer | EM gained | What is the ultimate aim of the Wayback Machine? | archive the entire Internet | to archive the entire Internet | to archive the entire Internet | Both are correct. It gained EM because the scorer keeps "to". |
 | Longer | EM lost | Where is Internet Archive headquartered? | San Francisco | San Francisco, California | San Francisco | Both are correct. It lost EM to the annotated boundary only. |
@@ -42,18 +44,18 @@ MBR tells the same story: longer +0.44 EM + F1 [+0.17, +0.71], shorter −0.31 [
 
 | Fix type | Changed | EM gained | EM lost | F1 better | F1 worse | Share of EM | Share of F1 | Share of EM + F1 |
 |---|---|---|---|---|---|---|---|---|
-| longer | 104.7 ± 7.0 | 53.3 | 30.7 | 62.3 | 39.3 | +0.29 [+0.10, +0.50] | +0.08 [+0.02, +0.15] | +0.38 [+0.12, +0.64] |
-| shorter | 177.3 ± 14.0 | 61.0 | 61.7 | 71.7 | 97.3 | -0.01 [-0.27, +0.25] | -0.17 [-0.28, -0.05] | -0.18 [-0.53, +0.18] |
-| crossing | 1.3 ± 0.6 | 0.0 | 0.0 | 1.3 | 0.0 | +0.00 [+0.00, +0.00] | +0.01 [+0.00, +0.02] | +0.01 [+0.00, +0.02] |
+| longer | 105.3 ± 6.5 | 54.3 | 30.3 | 63.3 | 39.0 | +0.31 [+0.11, +0.52] | +0.08 [+0.02, +0.15] | +0.40 [+0.13, +0.66] |
+| shorter | 178.0 ± 13.5 | 61.0 | 61.3 | 71.7 | 98.0 | -0.00 [-0.26, +0.25] | -0.17 [-0.28, -0.05] | -0.17 [-0.53, +0.18] |
+| crossing | 2.0 ± 1.0 | 0.0 | 0.7 | 1.3 | 0.7 | -0.01 [-0.02, +0.00] | +0.01 [-0.00, +0.02] | -0.00 [-0.02, +0.01] |
 | switch | 52.3 ± 5.0 | 16.3 | 18.0 | 27.0 | 22.0 | -0.02 [-0.15, +0.11] | -0.01 [-0.13, +0.11] | -0.03 [-0.27, +0.21] |
-| boundary | 283.3 ± 11.9 | 114.3 | 92.3 | 135.3 | 136.7 | +0.29 [-0.03, +0.61] | -0.08 [-0.21, +0.05] | +0.21 [-0.23, +0.64] |
-| all | 335.7 ± 15.9 | 130.7 | 110.3 | 162.3 | 158.7 | +0.26 [-0.08, +0.61] | -0.09 [-0.27, +0.09] | +0.18 [-0.32, +0.67] |
+| boundary | 285.3 ± 11.9 | 115.3 | 92.3 | 136.3 | 137.7 | +0.30 [-0.03, +0.62] | -0.08 [-0.21, +0.05] | +0.22 [-0.21, +0.65] |
+| all | 337.7 ± 15.9 | 131.7 | 110.3 | 163.3 | 159.7 | +0.28 [-0.07, +0.62] | -0.08 [-0.27, +0.09] | +0.19 [-0.31, +0.68] |
 
 ### MAP: by the reader's top-1 probability
 
 | Top-1 probability | Questions | Changed | EM gained | EM lost | Share of EM + F1 |
 |---|---|---|---|---|---|
-| < 0.5 | 2351 | 289.3 | 105.3 | 93.7 | +0.03 [-0.42, +0.49] |
+| < 0.5 | 2351 | 291.3 | 106.3 | 93.7 | +0.05 [-0.41, +0.50] |
 | 0.5-0.9 | 3688 | 46.3 | 25.3 | 16.7 | +0.14 [-0.05, +0.34] |
 | > 0.9 | 1669 | 0.0 | 0.0 | 0.0 | +0.00 [+0.00, +0.00] |
 
@@ -61,18 +63,18 @@ MBR tells the same story: longer +0.44 EM + F1 [+0.17, +0.71], shorter −0.31 [
 
 | Fix type | Changed | EM gained | EM lost | F1 better | F1 worse | Share of EM | Share of F1 | Share of EM + F1 |
 |---|---|---|---|---|---|---|---|---|
-| longer | 109.3 ± 7.0 | 55.0 | 30.7 | 68.3 | 38.7 | +0.32 [+0.11, +0.52] | +0.12 [+0.05, +0.19] | +0.44 [+0.17, +0.71] |
-| shorter | 180.0 ± 13.1 | 57.3 | 66.0 | 70.7 | 102.3 | -0.11 [-0.37, +0.14] | -0.20 [-0.32, -0.08] | -0.31 [-0.67, +0.04] |
-| crossing | 3.0 ± 0.0 | 0.0 | 0.0 | 3.0 | 0.0 | +0.00 [+0.00, +0.00] | +0.01 [+0.00, +0.03] | +0.01 [+0.00, +0.03] |
+| longer | 110.7 ± 6.1 | 55.7 | 30.3 | 70.0 | 38.3 | +0.33 [+0.13, +0.54] | +0.13 [+0.06, +0.20] | +0.46 [+0.19, +0.73] |
+| shorter | 179.7 ± 12.7 | 57.3 | 65.7 | 70.7 | 102.0 | -0.11 [-0.37, +0.15] | -0.20 [-0.32, -0.08] | -0.31 [-0.66, +0.05] |
+| crossing | 3.0 ± 1.0 | 0.3 | 0.7 | 2.3 | 0.7 | -0.00 [-0.02, +0.01] | +0.01 [-0.00, +0.02] | +0.00 [-0.02, +0.02] |
 | switch | 48.7 ± 3.5 | 16.3 | 18.0 | 25.0 | 20.7 | -0.02 [-0.15, +0.10] | +0.01 [-0.11, +0.13] | -0.01 [-0.25, +0.23] |
-| boundary | 292.3 ± 11.0 | 112.3 | 96.7 | 142.0 | 141.0 | +0.20 [-0.13, +0.53] | -0.06 [-0.20, +0.07] | +0.14 [-0.31, +0.58] |
-| all | 341.0 ± 11.5 | 128.7 | 114.7 | 167.0 | 161.7 | +0.18 [-0.17, +0.53] | -0.05 [-0.23, +0.12] | +0.13 [-0.38, +0.63] |
+| boundary | 293.3 ± 11.0 | 113.3 | 96.7 | 143.0 | 141.0 | +0.22 [-0.12, +0.54] | -0.06 [-0.20, +0.08] | +0.16 [-0.29, +0.60] |
+| all | 342.0 ± 11.5 | 129.7 | 114.7 | 168.0 | 161.7 | +0.19 [-0.16, +0.54] | -0.05 [-0.23, +0.13] | +0.14 [-0.36, +0.65] |
 
 ### MBR: by the reader's top-1 probability
 
 | Top-1 probability | Questions | Changed | EM gained | EM lost | Share of EM + F1 |
 |---|---|---|---|---|---|
-| < 0.5 | 2351 | 295.7 | 103.3 | 98.7 | -0.03 [-0.50, +0.43] |
+| < 0.5 | 2351 | 296.7 | 104.3 | 98.7 | -0.01 [-0.48, +0.45] |
 | 0.5-0.9 | 3688 | 45.3 | 25.3 | 16.0 | +0.15 [-0.04, +0.35] |
 | > 0.9 | 1669 | 0.0 | 0.0 | 0.0 | +0.00 [+0.00, +0.00] |
 
@@ -80,7 +82,7 @@ MBR tells the same story: longer +0.44 EM + F1 [+0.17, +0.71], shorter −0.31 [
 
 | Pair (a vs b) | Both right | Only a | Only b | Both wrong | b right when a wrong | a right when b wrong | φ |
 |---|---|---|---|---|---|---|---|
-| reader vs separate verifier alone (3 seeds) | 72.15 | 4.76 | 3.70 | 19.39 | 16.0 | 19.7 | 0.766 |
+| reader vs separate verifier alone (3 seeds) | 72.16 | 4.76 | 3.71 | 19.37 | 16.1 | 19.7 | 0.765 |
 | reader vs shared verifier alone (seed 0, its own lists) | 74.81 | 2.09 | 1.83 | 21.28 | 7.9 | 8.9 | 0.890 |
 | reader seed 0 vs reader seeds 1, 2 | 74.33 | 2.63 | 2.65 | 20.39 | 11.5 | 11.4 | 0.851 |
-| separate verifier seed 0 vs seeds 1, 2 | 72.76 | 3.03 | 3.11 | 21.09 | 12.9 | 12.6 | 0.832 |
+| separate verifier seed 0 vs seeds 1, 2 | 72.79 | 3.03 | 3.11 | 21.07 | 12.9 | 12.6 | 0.832 |

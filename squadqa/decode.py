@@ -222,7 +222,7 @@ def fit_temperature(items: list[tuple[np.ndarray, int]], lo: float = 0.05, hi: f
 
 @dataclass
 class Candidates:
-    starts: np.ndarray          # (k,) top-k spans, most probable first
+    starts: np.ndarray          # (k,) spans, in any order (top_k's are most probable first)
     ends: np.ndarray
     logp: np.ndarray            # (k,) log-probability under the full softmax at temperature T
 
