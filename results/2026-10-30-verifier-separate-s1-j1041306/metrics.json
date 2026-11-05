@@ -7,35 +7,40 @@
   "gpu": "NVIDIA H100 NVL MIG 3g.47gb",
   "per_device_batch": 16,
   "peak_gpu_gb_train": 23.3,
+  "rescored": {
+    "git_commit": "4b06643cc70da9fab9e4df6ba6816b33a507d41d",
+    "git_dirty": false,
+    "lists": "data\\verifier\\2026-10-23-row1-joint-s0-j998373"
+  },
   "validation": {
     "reader_map": {
-      "exact": 76.90710949662689,
-      "f1": 89.45499725915103,
+      "exact": 76.92008303061753,
+      "f1": 89.45710407236318,
       "total": 7708
     },
     "reader_mbr": {
-      "exact": 76.95900363258951,
-      "f1": 89.51378729731546,
+      "exact": 76.97197716658017,
+      "f1": 89.51589411052761,
       "total": 7708
     },
     "verifier_map": {
-      "exact": 75.97301504929943,
-      "f1": 88.43037294629653,
+      "exact": 75.99896211728074,
+      "f1": 88.43440915687141,
       "total": 7708
     },
     "verifier_mbr": {
-      "exact": 75.96004151530877,
-      "f1": 88.51749328843142,
+      "exact": 75.9859885832901,
+      "f1": 88.52152949900629,
       "total": 7708
     },
     "combined_map": {
-      "exact": 77.11468604047742,
-      "f1": 89.3639547464,
+      "exact": 77.14063310845874,
+      "f1": 89.36799095697486,
       "total": 7708
     },
     "combined_mbr": {
-      "exact": 77.10171250648676,
-      "f1": 89.44783861363982,
+      "exact": 77.12765957446808,
+      "f1": 89.45187482421468,
       "total": 7708
     }
   },
@@ -43,7 +48,7 @@
   "lambda_questions": 7209,
   "temperature": {
     "combined": 1.797915251212458,
-    "verifier": 1.0415804179094137
+    "verifier": 1.0415804179094135
   },
   "temperature_at_edge": {
     "combined": false,
