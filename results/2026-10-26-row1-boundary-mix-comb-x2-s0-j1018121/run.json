@@ -1,0 +1,11 @@
+{
+  "run_id": "2026-10-26-row1-boundary-mix-comb-x2-s0-j1018121",
+  "experiment": "row1-boundary-mix",
+  "config_file": "configs/experiments/row1-boundary-mix.yaml",
+  "seed": 0,
+  "git_commit": "ecee510f174c27c41e02e4a4b40000c3ee922b48",
+  "git_dirty": false,
+  "slurm_job_id": "1018121",
+  "host": "xgpg2",
+  "started": "2026-10-26T14:56:54"
+}
