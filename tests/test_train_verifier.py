@@ -314,6 +314,19 @@ def test_score_set_without_fitted_temperatures_is_the_reader_alone(tmp_path, mon
     assert json.loads((run / "predictions_dev_combined_mbr.json").read_text()) == want["combined_mbr"] == want["reader_mbr"]
 
 
+def test_answers_from_a_list_sorted_by_position_take_the_most_probable_variant():
+    # candidates._build sorts a list by position, so a group's earliest variant comes first. The scorer would call
+    # these two equal, but not a curly quote or a dash at an answer's edge.
+    from squadqa.data import word_spans
+
+    context = "Visit the Eiffel Tower today"
+    ex = SimpleNamespace(question=SimpleNamespace(id="q", context=context), context=SimpleNamespace(words=word_spans(context)))
+    entry = {"spans": [[1, 3], [2, 3], [4, 4]], "logp": np.log([0.2, 0.5, 0.3]).tolist()}
+    rcfg = {"decode_rules": ["map", "mbr"], "mbr_utility": "normalized", "mbr_em_weight": 1.0}
+    preds = TV.decode_predictions([ex], [entry], [np.array([0.0, 2.0, 0.0])], rcfg, 1.0, 1.0, 1.0)
+    assert len(preds) == 6 and all(answers["q"] == "Eiffel Tower" for answers in preds.values())
+
+
 def test_rescore_refuses_other_lists(tmp_path, monkeypatch):
     """Saved scores that don't fit the lists (other lists than the run scored) raise."""
     from squadqa import config as Cf, predict as P

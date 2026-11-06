@@ -222,7 +222,7 @@ def fit_temperature(items: list[tuple[np.ndarray, int]], lo: float = 0.05, hi: f
 
 @dataclass
 class Candidates:
-    starts: np.ndarray          # (k,) top-k spans, most probable first
+    starts: np.ndarray          # (k,) spans, in any order (top_k's are most probable first)
     ends: np.ndarray
     logp: np.ndarray            # (k,) log-probability under the full softmax at temperature T
 
@@ -278,7 +278,9 @@ def answer_groups(cands: Candidates, flags: np.ndarray, utility: str,
     first: dict[tuple[int, ...], int] = {}
     mass: dict[tuple[int, ...], float] = {}
     p = np.exp(cands.logp)
-    for c, key in enumerate(keys):                          # candidates are most probable first
+    # Most probable first, whatever order the candidates come in: top_k's are sorted, a verifier list's by position.
+    for c in np.argsort(-cands.logp, kind="stable").tolist():
+        key = keys[c]
         first.setdefault(key, c)
         mass[key] = mass.get(key, 0.0) + float(p[c])
     return np.array([first[g] for g in first]), np.array([mass[g] for g in first])

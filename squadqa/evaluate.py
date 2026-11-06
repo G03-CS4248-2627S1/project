@@ -101,6 +101,14 @@ def question_ids(dataset: list[dict]) -> list[str]:
     return [qa["id"] for article in dataset for p in article["paragraphs"] for qa in p["qas"]]
 
 
+def first_reference(dataset: list[dict]) -> list[dict]:
+    """A copy of the articles with only each question's first answer. Validation has one reference
+    per question, so this is the score to set beside it (AGENTS.md, "Data"); the scorer's maximum
+    over all of a set's references is far higher."""
+    return [{**a, "paragraphs": [{**p, "qas": [{**qa, "answers": qa["answers"][:1]} for qa in p["qas"]]}
+                                 for p in a["paragraphs"]]} for a in dataset]
+
+
 def load_predictions(path: str | Path) -> dict[str, str]:
     with open(path, encoding="utf-8") as f:
         preds = json.load(f)

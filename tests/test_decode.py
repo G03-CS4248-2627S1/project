@@ -233,6 +233,33 @@ def test_mbr_positional_counts_every_word():
     assert Dc.decode(c, f, "mbr", "positional") == (1, 2)       # tie: the first candidate
 
 
+def test_the_answer_is_the_most_probable_variant_in_any_candidate_order():
+    # A verifier list is sorted by position, so a group's earliest variant comes first but isn't the most probable.
+    text = "Visit the Eiffel Tower . Big Ben"
+    f = flags_of(text)
+    by_position = cands([(1, 3), (2, 3), (5, 6)], [0.2, 0.45, 0.35])    # the Eiffel Tower; Eiffel Tower; Big Ben
+    assert Dc.decode(by_position, f, "map", "normalized") == (2, 3)
+    assert Dc.decode(by_position, f, "mbr", "normalized") == (2, 3)
+    rep, prob = Dc.answer_groups(by_position, f, "normalized")
+    assert rep.tolist() == [1, 2]                                       # indices into the candidates as given
+    assert prob == pytest.approx([0.65, 0.35])
+
+
+@pytest.mark.parametrize("rule", ["map", "mbr"])
+@pytest.mark.parametrize("utility", ["normalized", "positional", "string"])
+def test_decoding_does_not_depend_on_the_candidate_order(rule, utility):
+    text = "In the 2015 season , the Eiffel Tower and Big Ben ."
+    f, w = flags_of(text), words_of(text)
+    spans = [(1, 2), (2, 2), (0, 2), (5, 7), (6, 7), (9, 10), (6, 10)]
+    probs = np.array([0.08, 0.2, 0.05, 0.1, 0.27, 0.22, 0.08])
+    sorted_first = np.argsort(-probs, kind="stable")
+    answers = set()
+    for order in (sorted_first, np.arange(len(spans)), sorted_first[::-1]):
+        c = cands([spans[k] for k in order], probs[order])
+        answers.add(Dc.decode(c, f, rule, utility, texts=[Dc.answer_text(text, w, *spans[k]) for k in order]))
+    assert len(answers) == 1
+
+
 # String grouping (mbr_utility: string): the scorer's normalization at any position, decoding only.
 
 def texts_of(text, c):

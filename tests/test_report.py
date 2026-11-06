@@ -146,6 +146,10 @@ def test_compare_on_adversarial_sets_uses_the_worst_case_groups(tmp_path, monkey
     assert out["systems"]["A"]["exact"]["mean"] == pytest.approx(50.0)
     assert out["systems"]["A"]["exact"]["mean"] == pytest.approx(E.metrics("addsent", adversarial_set(), worst)["adversarial"]["exact"])
     assert out["contrasts"]["B-A"]["exact"]["diff"] == pytest.approx(50.0)
+    # Beside the worst case, spec §6's averages over all 4 questions and over the 2 originals.
+    assert out["systems"]["A"]["all_questions"]["exact"]["mean"] == pytest.approx(75.0)
+    assert out["systems"]["A"]["original"]["exact"]["mean"] == pytest.approx(100.0)
+    assert "| A | 75.00 ± 0.00 | 75.00 ± 0.00 | 100.00 ± 0.00 | 100.00 ± 0.00 |" in R.markdown(out)
     # Other sets score every question on its own.
     write_preds(tmp_path, "r", "dev", "map", worst)
     out = R.compare([("A", "map", ["r"])], [], "dev", 100, final=True)
@@ -172,6 +176,20 @@ def test_main_passes_split_and_final(tmp_path, monkeypatch, capsys):
     assert "| A | COMBINED_MBR | 1 | 100.00" in capsys.readouterr().out
     with pytest.raises(SystemExit):
         R.main(["compare", "A=map:r", "--split", "not-a-set"])
+
+
+def test_first_reference_scores_against_the_first_answer_alone(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(R, "RESULTS", tmp_path)
+    qas = [{"id": "q0", "question": "q?", "answers": [{"text": "cat", "answer_start": 0}, {"text": "mat", "answer_start": 0}]},
+           {"id": "q1", "question": "q?", "answers": [{"text": "cat", "answer_start": 0}]}]
+    monkeypatch.setattr(E, "load_eval_set", lambda name, final=False: [{"title": "T", "paragraphs": [{"context": "c", "qas": qas}]}])
+    write_preds(tmp_path, "r", "dev", "map", {"q0": "mat", "q1": "cat"})
+    assert R.compare([("A", "map", ["r"])], [], "dev", 100, final=True)["systems"]["A"]["exact"]["mean"] == pytest.approx(100.0)
+    out = R.compare([("A", "map", ["r"])], [], "dev", 100, final=True, first_reference=True)
+    assert out["first_reference"] is True
+    assert out["systems"]["A"]["exact"]["mean"] == pytest.approx(50.0)
+    R.main(["compare", "A=map:r", "--split", "dev", "--final", "--first-reference"])
+    assert "| A | MAP | 1 | 50.00" in capsys.readouterr().out
 
 
 def test_article_splits_use_each_half_both_ways():

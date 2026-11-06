@@ -11,6 +11,8 @@
 #   shared_lora, group lists (j1037045, #103)           77.01 / 77.08   λ fitted to 0 (the reader's own)
 #   separate, this file (j1032972, #102)                77.15 / 77.14   held-out gain +0.23 EM (9 of 10)
 #   (held out: λ and T fitted on half the validation articles, scored on the other half, 5 splits x 2.)
+#   These are the numbers E2 decided on. With #115's decoding fix, separate is 77.18 / 77.17, +0.24 held out, and the
+#   reader alone 76.92 / 76.97; shared_lora on span lists moves about +0.01 (scored on the lists of the line above).
 #   In an ensemble of both, the fit gives shared_lora zero weight on every half (#101).
 # Runs: verifier seeds 0-2 on the one stage-2 reader (#79, #94) and its lists in data/verifier/<reader>/:
 #   soc.sh submit --gpus=flexible --time=03:00:00 --export=ALL,EXPERIMENT=verifier-separate,SEED=<1|2> \
