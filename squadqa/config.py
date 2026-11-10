@@ -3,7 +3,9 @@
 Every entry point builds its configuration the same way: configs/base.yaml, then one
 experiment file from configs/experiments/, then --set overrides. An experiment file holds
 only the keys it changes, and every key it or --set names must already exist in base.yaml,
-so a typo raises instead of being ignored. Machine paths come from .env through env(),
+so a typo raises instead of being ignored. The historical experimental key risk_weight is
+accepted as an additive-loss alias for legacy_risk_weight; risk_share remains the current default.
+Machine paths come from .env through env(),
 which raises if a variable is missing; hyperparameters never go there.
 
     parser = argparse.ArgumentParser()
