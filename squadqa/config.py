@@ -41,6 +41,12 @@ def _merge(base: dict, override: dict, where: str = "") -> dict:
     for key, value in override.items():
         name = f"{where}{key}"
         if key not in base:
+            if not where and key == "risk_weight" and "legacy_risk_weight" in base:
+                # Keep historical experimental configs/overrides reproducible without
+                # reintroducing risk_weight into the current default config schema.
+                _check_type(name, None, value)
+                out[key] = value
+                continue
             raise KeyError(f"unknown config key {name!r}: it is not in {BASE}")
         if isinstance(base[key], dict):
             if not isinstance(value, dict):

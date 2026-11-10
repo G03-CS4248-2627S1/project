@@ -53,7 +53,7 @@ f1_target_temperature: 0.1             # τ: how evenly the F1 credit is spread
 f1_target_floor: 0.5                   # φ: spans with F1 < φ get no F1 credit; 0 = every overlapping span
 target_unit: span                      # span = targets per span (t_EM on the annotated span) | group = per group of boundary variants, so both parts count the gold answer once (§4.3; needs loss_utility normalized and a joint or compound head, so the default stays span for row 0); ladder row 1 sets group in its config
 risk_share: 0.0                        # β: share of the expected-F1 (risk) loss, ℒ = (1 − β) · ℒ_soft + β · ℒ_risk (§4.3); 0 = none, 1 = risk loss alone
-risk_weight: null                      # legacy additive beta; opt in explicitly, never combine with risk_share
+legacy_risk_weight: null               # legacy additive beta; old experiment key risk_weight is accepted as an alias
 normalize_loss_weights: false           # legacy additive recipe only: divide by 1+beta
 loss_weights: null                      # optional joint-head {group, f1_soft, risk} coefficients summing to one
 risk_em_weight: 0.0                    # γ_r: weight of the EM loss inside the risk term, ℒ_risk = Σ p · (ℓ_F1 + γ_r · ℓ_EM) (§4.3); 0 = F1 only. Separate from the decoding γ
@@ -266,9 +266,9 @@ target_unit group:  ℒ_soft = (1 − α) · (− log p(G*)) + α · (− Σ_G t
 ℒ_risk = Σ_y p(y) · [ℓ_F1(y, y*) + γ_r · ℓ_EM(y, y*)]   # every valid span; no floor; γ_r = 0: F1 only
 ℒ = (1 − β) · ℒ_soft + β · ℒ_risk                 # β = risk_share in [0, 1], γ_r = risk_em_weight (plan §6.2)
 ```
-Experimental legacy `risk_weight: beta_old` explicitly selects the old additive objective, independently of the current `risk_share` API. `normalize_loss_weights: true` divides that legacy additive objective by `1 + beta_old` on the joint head. Never set a nonzero `risk_share` with `risk_weight`; direct `loss_weights` also rejects nonzero alpha/beta/share settings. Main’s default share objective and scale remain unchanged.
+Experimental `legacy_risk_weight: beta_old` (historical alias `risk_weight`) explicitly selects the old additive objective, independently of the current `risk_share` API. `normalize_loss_weights: true` divides that legacy additive objective by `1 + beta_old` on the joint head. Never set a nonzero `risk_share` with `risk_weight`; direct `loss_weights` also rejects nonzero alpha/beta/share settings. Main’s default share objective and scale remain unchanged.
 The group, F1 soft-target and risk coefficients become `(1-α)/(1+β)`, `α/(1+β)`, and `β/(1+β)`.
-They sum to one. With α = β = 1/3 they are 0.50, 0.25 and 0.25. Defaults and old runs retain the additive objective.
+Here β denotes the legacy additive coefficient. They sum to one. With α = beta_old = 1/3 they are 0.50, 0.25 and 0.25. Only explicitly selected, unnormalized legacy configs retain the additive objective.
 
 The experimental `loss_weights` mapping specifies the three coefficients directly, including
 `{group: 0, f1_soft: 0, risk: 1}` for pure risk. It requires the joint head and group targets.

@@ -490,7 +490,9 @@ def risk_loss(out: dict, batch: dict, n_examples: int, em_weight: float, counted
 
 def check_head_config(cfg: dict) -> None:
     """Raise on a head setting that is not built or does not apply (spec rule 7: nothing ignored)."""
-    legacy = cfg.get("risk_weight")
+    legacy = cfg.get("risk_weight", cfg.get("legacy_risk_weight"))
+    if cfg.get("risk_weight") is not None and cfg.get("legacy_risk_weight") is not None:
+        raise ValueError("risk_weight alias and legacy_risk_weight cannot be combined")
     if legacy is not None:
         if isinstance(legacy, bool) or not isinstance(legacy, (int, float)) or not math.isfinite(legacy) or legacy < 0:
             raise ValueError("legacy risk_weight must be finite and nonnegative")
@@ -509,7 +511,7 @@ def check_head_config(cfg: dict) -> None:
             raise ValueError("loss_weights must be finite, nonnegative and sum to one")
         if cfg["target_unit"] != "group":
             raise ValueError("direct loss_weights use target_unit group")
-        if cfg.get("normalize_loss_weights", False) or cfg["f1_target_weight"] or cfg.get("risk_weight") or cfg["risk_share"]:
+        if cfg.get("normalize_loss_weights", False) or cfg["f1_target_weight"] or cfg.get("risk_weight", cfg.get("legacy_risk_weight")) or cfg["risk_share"]:
             raise ValueError("direct loss_weights cannot be combined with alpha, beta or normalize_loss_weights")
     if cfg.get("normalize_loss_weights", False) and cfg["span_head"] != "joint":
         raise ValueError("normalize_loss_weights is supported only for the joint head")
@@ -530,7 +532,7 @@ def check_head_config(cfg: dict) -> None:
         raise ValueError("content_ignore_words must be a list of nonempty lowercase strings")
     if not {"a", "an", "the"}.issubset(ignored) or len(ignored) != len(set(ignored)):
         raise ValueError("content_ignore_words must include a/an/the exactly once and have no duplicates")
-    risk_active = weights["risk"] > 0 if weights is not None else (cfg.get("risk_weight") or cfg["risk_share"]) > 0
+    risk_active = weights["risk"] > 0 if weights is not None else (cfg.get("risk_weight", cfg.get("legacy_risk_weight")) or cfg["risk_share"]) > 0
     if cfg["risk_em_weight"] < 0 or (cfg["risk_em_weight"] and not risk_active):
         raise ValueError("risk_em_weight is the EM weight inside the risk loss: it must be >= 0, "
                          "and above 0 only with an active risk term")
@@ -571,7 +573,7 @@ class Reader(nn.Module):
         self.normalize_loss_weights = cfg.get("normalize_loss_weights", False)
         self.loss_weights = cfg.get("loss_weights")
         self.alpha, self.tau, self.floor = cfg["f1_target_weight"], cfg["f1_target_temperature"], cfg["f1_target_floor"]
-        legacy = cfg.get("risk_weight")
+        legacy = cfg.get("risk_weight", cfg.get("legacy_risk_weight"))
         self.beta = cfg["risk_share"] if legacy is None else legacy / (1 + legacy)
         self.loss_scale = 1.0 if legacy is None or self.normalize_loss_weights else 1 + legacy
         self.risk_em_weight, self.loss_utility = cfg["risk_em_weight"], cfg["loss_utility"]
