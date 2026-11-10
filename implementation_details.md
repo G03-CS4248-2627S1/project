@@ -45,12 +45,17 @@ decode_topk: 10
 decode_rules: [map, mbr]               # always report both
 mbr_em_weight: 1.0                     # γ, the F1:EM decoding ratio: MBR utility F1 + γ·EM; 0 = expected F1
 mbr_utility: normalized                # normalized = content-word F1/EM, boundary variants grouped | positional | string = the scorer's normalization at any position (both E1 rows; §4.4)
+content_ignore_words: [a, an, the]     # words ignored in normalized span groups for training/calibration/MBR; official scorer is fixed
+expanded_group_weight: 1.0             # group loss only: (1-w)*official article-only group NLL + w*content_ignore_words group NLL
 loss_utility: normalized               # F1 and EM between a span and the gold in the losses (F1 target, risk): normalized = content-word F1/EM, boundary variants exact | positional (ablation; §4.3)
 f1_target_weight: 0.0                  # α, the F1:EM loss ratio (§4.3); 0 = one-hot target (rows 0–1), tuned in E1
 f1_target_temperature: 0.1             # τ: how evenly the F1 credit is spread
 f1_target_floor: 0.5                   # φ: spans with F1 < φ get no F1 credit; 0 = every overlapping span
 target_unit: span                      # span = targets per span (t_EM on the annotated span) | group = per group of boundary variants, so both parts count the gold answer once (§4.3; needs loss_utility normalized and a joint or compound head, so the default stays span for row 0); ladder row 1 sets group in its config
 risk_share: 0.0                        # β: share of the expected-F1 (risk) loss, ℒ = (1 − β) · ℒ_soft + β · ℒ_risk (§4.3); 0 = none, 1 = risk loss alone
+risk_weight: null                      # legacy additive beta; opt in explicitly, never combine with risk_share
+normalize_loss_weights: false           # legacy additive recipe only: divide by 1+beta
+loss_weights: null                      # optional joint-head {group, f1_soft, risk} coefficients summing to one
 risk_em_weight: 0.0                    # γ_r: weight of the EM loss inside the risk term, ℒ_risk = Σ p · (ℓ_F1 + γ_r · ℓ_EM) (§4.3); 0 = F1 only. Separate from the decoding γ
 calibration: temperature               # one T, fit on validation split
 extra_train_data: []                   # row 5: [adversarialqa]; augmentation (P2) adds augmented
@@ -257,6 +262,14 @@ target_unit group:  ℒ_soft = (1 − α) · (− log p(G*)) + α · (− Σ_G t
 ℒ_risk = Σ_y p(y) · [ℓ_F1(y, y*) + γ_r · ℓ_EM(y, y*)]   # every valid span; no floor; γ_r = 0: F1 only
 ℒ = (1 − β) · ℒ_soft + β · ℒ_risk                 # β = risk_share in [0, 1], γ_r = risk_em_weight (plan §6.2)
 ```
+Experimental legacy `risk_weight: beta_old` explicitly selects the old additive objective, independently of the current `risk_share` API. `normalize_loss_weights: true` divides that legacy additive objective by `1 + beta_old` on the joint head. Never set a nonzero `risk_share` with `risk_weight`; direct `loss_weights` also rejects nonzero alpha/beta/share settings. Main’s default share objective and scale remain unchanged.
+The group, F1 soft-target and risk coefficients become `(1-α)/(1+β)`, `α/(1+β)`, and `β/(1+β)`.
+They sum to one. With α = β = 1/3 they are 0.50, 0.25 and 0.25. Defaults and old runs retain the additive objective.
+
+The experimental `loss_weights` mapping specifies the three coefficients directly, including
+`{group: 0, f1_soft: 0, risk: 1}` for pure risk. It requires the joint head and group targets.
+All weights must be finite, nonnegative and sum to one; legacy α, β and normalization must be off.
+Zero-weight loss terms are not evaluated. The risk term retains `risk_em_weight` internally.
 - **One objective for every training variant** (plan §6.2):
 
   | | β = 0 | 0 < β < 1 | β = 1 |
@@ -286,6 +299,7 @@ target_unit group:  ℒ_soft = (1 − α) · (− log p(G*)) + α · (− Σ_G t
     - `span` (the default): t_EM puts all its mass on the annotated span, so α = 0 is the one-hot loss that rows 0–1 were trained with. But each boundary variant gets its own t_F1 weight, so the gold's group gets one unit per variant: extra EM weight inside the F1 part that varies by question. The target's EM:F1 ratio is exactly (1 − α) : α only per group.
     - `group`: both parts work on groups of boundary variants, grouped as in decoding (`decode.group_keys`: the same content words at the same position; a span without content words is its own group). The EM part is −log p(G*), t_F1 gives each group one weight, and p(G) sums the probabilities of the group's spans. Each part then counts the gold answer once, as normalized EM does, and the model splits a group's mass among its variants as it likes. α = 0 is then −log p(G*), not the rows 0–1 loss. Built: the EM part is `heads.group_nll`, the F1 part `heads.f1_target_nll` with `unit="group"`. Group membership is worked out per window from the gold's content core (`core_start`, `core_end` in the batch), so a trimmed variant also counts in a window that cuts off the gold's leading article. Compound's auxiliary start and end term stays one-hot.
     - `group` needs `loss_utility: normalized` (under `positional` every span is its own group) and a span softmax (span_head joint or compound). The risk loss is the same under both, since every member of a group has the same loss.
+- **Boundary-group interpolation (row 1 ablation):** `content_ignore_words` chooses which words are absent from the content core used for the expanded gold group and for normalized decoding. With `expanded_group_weight: w`, the group training term is `(1 − w) · (−log p(G_article)) + w · (−log p(G_expanded))`. `G_article` ignores only punctuation and `a/an/the`, matching the existing row 1 loss; `G_expanded` also ignores the configured words. Both use the same question-wide span softmax and the annotated answer position. `w=1` reproduces the fully expanded group loss, `w=0` the existing article-only group loss. The official scorer is never modified. Calibration and MBR use `content_ignore_words`; comparisons of the two expanded-word configs therefore isolate the loss weight.
 - **The same text elsewhere in the passage gets no credit** (rule 4), whatever the scorer does. This is where `normalized` deliberately differs from the scorer, besides punctuation inside a word ("U.S." → "us", "well-known" → "wellknown") and the scorer's bag-of-tokens comparison.
 - The size of the gap is measured in week 8 (timeline 1.6); it bounds what `normalized` can gain.
 

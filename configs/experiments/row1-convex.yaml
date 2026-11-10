@@ -1,0 +1,17 @@
+# Exact objective: 0.50 group NLL + 0.25 F1 soft-target NLL + 0.25 expected risk.
+# alpha=beta=1/3 before normalization; original article-only grouping.
+span_head: joint
+bilinear_form: full
+bilinear_pos: none
+length_bias: false
+no_answer: false
+target_unit: group
+content_ignore_words: [a, an, the]
+f1_target_weight: 0.3333333333333333
+f1_target_temperature: 0.3
+f1_target_floor: 0.0
+risk_weight: 0.3333333333333333
+risk_em_weight: 1.0
+normalize_loss_weights: true
+train:
+  epochs: 2

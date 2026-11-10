@@ -259,6 +259,23 @@ def test_group_nll_is_joint_nll_when_the_gold_has_no_variant():
     assert float(H.group_nll(out, batch, 1)) == pytest.approx(float(H.joint_nll(out, batch, 1)), abs=1e-6)
 
 
+def test_interpolated_group_loss_partially_credits_dropped_preposition():
+    # Gold "to Paris"; official normalization counts "to", expanded normalization ignores it.
+    span = torch.tensor([[[0.1, 0.4], [INF, 0.3]]], requires_grad=True)
+    out = {"span": span}
+    batch = {"content": torch.tensor([[False, True]]), "core_start": torch.tensor([1]),
+             "core_end": torch.tensor([1]), "official_content": torch.tensor([[True, True]]),
+             "official_core_start": torch.tensor([0]), "official_core_end": torch.tensor([1]),
+             "gold_start": torch.tensor([0]), "gold_end": torch.tensor([1]), "example": torch.tensor([0])}
+    official = H.interpolated_group_nll(out, batch, 1, 0.0)
+    expanded = H.interpolated_group_nll(out, batch, 1, 1.0)
+    mixed = H.interpolated_group_nll(out, batch, 1, 0.5)
+    assert float(expanded) < float(mixed) < float(official)
+    assert float(mixed) == pytest.approx(float((official + expanded) / 2), abs=1e-6)
+    grad = lambda loss: torch.autograd.grad(loss.sum(), span, retain_graph=True)[0][0, 1, 1]
+    assert float(grad(mixed)) == pytest.approx(float((grad(official) + grad(expanded)) / 2), abs=1e-6)
+
+
 def test_a_gold_without_content_words_is_its_own_group():
     span = H.valid_spans(torch.zeros(1, 3, 3), torch.ones(1, 3, dtype=torch.bool), 3)
     batch = {"content": torch.tensor([[False, False, True]]), "core_start": torch.tensor([-1]),
@@ -348,6 +365,9 @@ def test_conditional_loss_uses_only_windows_holding_the_answer():
     (["target_unit=answer"], ValueError),
     (["span_head=joint", "target_unit=group", "loss_utility=positional"], ValueError),   # no variants to pool
     (["span_head=standard", "target_unit=group"], ValueError),                           # no span softmax
+    (["span_head=joint", "target_unit=group", "expanded_group_weight=-0.1"], ValueError),
+    (["span_head=joint", "target_unit=group", "expanded_group_weight=1.1"], ValueError),
+    (["span_head=joint", "expanded_group_weight=0.5"], ValueError),
     (["W_init=random"], NotImplementedError),
 ])
 def test_settings_that_are_not_built_or_do_not_apply_raise(overrides, error):
@@ -637,6 +657,18 @@ def test_windows_carry_content_flags_and_the_gold_core(small_train):
                 assert not gold.any()
             else:
                 assert w.gold[0] <= cs <= ce <= w.gold[1] and flags[w.first_word + cs] and flags[w.first_word + ce]
+
+
+def test_mixed_group_features_keep_both_gold_cores(tok):
+    cfg = load_config("configs/experiments/row1-boundary-mix.yaml")
+    q = D.Question("q", "t", "Travel to Paris", "Where did they travel?", (("to Paris", 7),))
+    feats = D.featurize([q], tok, cfg, training=True)
+    batch = D.collate(feats.batch([0]), tok.pad_token_id)
+    assert feats.examples[0].gold == (1, 2)
+    assert batch["content"][0, :3].tolist() == [True, False, True]
+    assert batch["official_content"][0, :3].tolist() == [True, True, True]
+    assert (int(batch["core_start"][0]), int(batch["core_end"][0])) == (2, 2)
+    assert (int(batch["official_core_start"][0]), int(batch["official_core_end"][0])) == (1, 2)
 
 
 def test_no_null_without_the_option(tok):

@@ -260,6 +260,8 @@ class Window:
     gold: tuple[int, int] | None = None     # gold word span local to this window, if wholly inside
     content: np.ndarray | None = None       # (n,) bool: which window words are content words (spec §4.3)
     core: tuple[int, int] | None = None     # the gold's first and last content word, local, if both are inside
+    official_content: np.ndarray | None = None  # article-only flags for interpolated group loss
+    official_core: tuple[int, int] | None = None
 
     @property
     def n_words(self) -> int:
@@ -356,7 +358,9 @@ def featurize(questions: list[Question], tokenizer, cfg: dict, training: bool) -
 
     from squadqa.decode import content_flags        # here: squadqa.decode imports this module
 
-    flags = {c: content_flags(c, ctx.words) for c, ctx in contexts.items()}
+    flags = {c: content_flags(c, ctx.words, cfg.get("content_ignore_words")) for c, ctx in contexts.items()}
+    mixed = training and cfg.get("expanded_group_weight", 1.0) < 1.0
+    official_flags = ({c: content_flags(c, ctx.words) for c, ctx in contexts.items()} if mixed else {})
     layout = pair_layout(tokenizer)
     question_ids = tokenizer([ex.question.question for ex in examples], add_special_tokens=False)["input_ids"]
     for e, (ex, q_ids) in enumerate(zip(examples, question_ids)):
@@ -365,6 +369,11 @@ def featurize(questions: list[Question], tokenizer, cfg: dict, training: bool) -
         if ex.gold is not None and f[ex.gold[0]:ex.gold[1] + 1].any():
             c = np.flatnonzero(f[ex.gold[0]:ex.gold[1] + 1])
             core = (ex.gold[0] + int(c[0]), ex.gold[0] + int(c[-1]))
+        official = official_flags.get(ex.question.context)
+        official_core = None
+        if official is not None and ex.gold is not None and official[ex.gold[0]:ex.gold[1] + 1].any():
+            c = np.flatnonzero(official[ex.gold[0]:ex.gold[1] + 1])
+            official_core = (ex.gold[0] + int(c[0]), ex.gold[0] + int(c[-1]))
         for win in make_windows(q_ids, ex.context, layout, cfg["max_seq_len"], cfg["doc_stride"], e,
                                 cfg["window_layout"]):
             if ex.gold is not None and win.first_word <= ex.gold[0] and ex.gold[1] < win.first_word + win.n_words:
@@ -372,6 +381,10 @@ def featurize(questions: list[Question], tokenizer, cfg: dict, training: bool) -
             win.content = f[win.first_word:win.first_word + win.n_words]
             if core is not None and win.first_word <= core[0] and core[1] < win.first_word + win.n_words:
                 win.core = (core[0] - win.first_word, core[1] - win.first_word)
+            if official is not None:
+                win.official_content = official[win.first_word:win.first_word + win.n_words]
+                if official_core is not None and win.first_word <= official_core[0] and official_core[1] < win.first_word + win.n_words:
+                    win.official_core = (official_core[0] - win.first_word, official_core[1] - win.first_word)
             ex.windows.append(len(windows))
             windows.append(win)
 
@@ -428,6 +441,7 @@ def collate(rows: list[tuple[int, Window]], pad_id: int) -> dict:
     core_start, core_end            (W,): the gold's first and last content word, local, -1 unless both
                                     are inside (target_unit group: a trimmed boundary variant can sit in a
                                     window that cuts off the gold's leading "the")
+    official_content, official_core_start/end: article-only version for the mixed group loss
     """
     import torch
 
@@ -439,9 +453,12 @@ def collate(rows: list[tuple[int, Window]], pad_id: int) -> dict:
     last_tok = torch.zeros((len(rows), n), dtype=torch.long)
     word_mask = torch.zeros((len(rows), n), dtype=torch.bool)
     content = torch.zeros((len(rows), n), dtype=torch.bool)
+    official_content = torch.zeros((len(rows), n), dtype=torch.bool)
     for r, (_, w) in enumerate(rows):
         if w.content is not None:
             content[r, :w.n_words] = torch.from_numpy(np.asarray(w.content, dtype=bool))
+        if w.official_content is not None:
+            official_content[r, :w.n_words] = torch.from_numpy(np.asarray(w.official_content, dtype=bool))
         input_ids[r, :len(w.input_ids)] = torch.from_numpy(w.input_ids.astype(np.int64))
         attention_mask[r, :len(w.input_ids)] = 1
         first_tok[r, :w.n_words] = torch.from_numpy(w.first_tok.astype(np.int64))
@@ -449,6 +466,7 @@ def collate(rows: list[tuple[int, Window]], pad_id: int) -> dict:
         word_mask[r, :w.n_words] = True
     gold = [w.gold or (-1, -1) for _, w in rows]
     core = [w.core or (-1, -1) for _, w in rows]
+    official_core = [w.official_core or (-1, -1) for _, w in rows]
     return {
         "input_ids": input_ids, "attention_mask": attention_mask,
         "first_tok": first_tok, "last_tok": last_tok, "word_mask": word_mask,
@@ -461,6 +479,9 @@ def collate(rows: list[tuple[int, Window]], pad_id: int) -> dict:
         "content": content,
         "core_start": torch.tensor([c[0] for c in core]),
         "core_end": torch.tensor([c[1] for c in core]),
+        "official_content": official_content,
+        "official_core_start": torch.tensor([c[0] for c in official_core]),
+        "official_core_end": torch.tensor([c[1] for c in official_core]),
     }
 
 

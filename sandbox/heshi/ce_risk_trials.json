@@ -1,0 +1,252 @@
+{
+  "purpose": "Ordinary Row 1 group cross entropy versus expected risk; F1 soft-target loss is disabled",
+  "status": "prepared; not submitted",
+  "config": "configs/experiments/row1-ce-risk.yaml",
+  "model": "microsoft/deberta-v3-large",
+  "seed": 0,
+  "schedule_epochs": 2,
+  "screen_stop_after_steps": 2487,
+  "total_planned_steps": 4974,
+  "grouping": "original article-only",
+  "loss_formula": "a * group_CE + (1-a) * expected_risk",
+  "risk_utility": "1-F1 + 1-EM, normalized positional utility; this is distinct from F1 soft-target loss",
+  "fixed_learning_rate": 2e-05,
+  "trials": [
+    {
+      "id": "ce100",
+      "loss_weights": {
+        "group": 1.0,
+        "f1_soft": 0.0,
+        "risk": 0.0
+      },
+      "risk_em_weight": 0.0,
+      "train_arguments": [
+        "--per-device-batch",
+        "8",
+        "--eval-each-epoch",
+        "--stop-after",
+        "2487",
+        "--set",
+        "loss_weights.group=1.0",
+        "--set",
+        "loss_weights.f1_soft=0.0",
+        "--set",
+        "loss_weights.risk=0.0",
+        "--set",
+        "risk_em_weight=0.0"
+      ],
+      "sbatch_options": [
+        "--gpus=a100-40",
+        "--time=01:15:00",
+        "--export=ALL,EXPERIMENT=row1-ce-risk,TAG=ce100,SEED=0"
+      ]
+    },
+    {
+      "id": "ce90",
+      "loss_weights": {
+        "group": 0.9,
+        "f1_soft": 0.0,
+        "risk": 0.1
+      },
+      "risk_em_weight": 1.0,
+      "train_arguments": [
+        "--per-device-batch",
+        "8",
+        "--eval-each-epoch",
+        "--stop-after",
+        "2487",
+        "--set",
+        "loss_weights.group=0.9",
+        "--set",
+        "loss_weights.f1_soft=0.0",
+        "--set",
+        "loss_weights.risk=0.1",
+        "--set",
+        "risk_em_weight=1.0"
+      ],
+      "sbatch_options": [
+        "--gpus=a100-40",
+        "--time=01:15:00",
+        "--export=ALL,EXPERIMENT=row1-ce-risk,TAG=ce90,SEED=0"
+      ]
+    },
+    {
+      "id": "ce75",
+      "loss_weights": {
+        "group": 0.75,
+        "f1_soft": 0.0,
+        "risk": 0.25
+      },
+      "risk_em_weight": 1.0,
+      "train_arguments": [
+        "--per-device-batch",
+        "8",
+        "--eval-each-epoch",
+        "--stop-after",
+        "2487",
+        "--set",
+        "loss_weights.group=0.75",
+        "--set",
+        "loss_weights.f1_soft=0.0",
+        "--set",
+        "loss_weights.risk=0.25",
+        "--set",
+        "risk_em_weight=1.0"
+      ],
+      "sbatch_options": [
+        "--gpus=a100-40",
+        "--time=01:15:00",
+        "--export=ALL,EXPERIMENT=row1-ce-risk,TAG=ce75,SEED=0"
+      ]
+    },
+    {
+      "id": "ce50",
+      "loss_weights": {
+        "group": 0.5,
+        "f1_soft": 0.0,
+        "risk": 0.5
+      },
+      "risk_em_weight": 1.0,
+      "train_arguments": [
+        "--per-device-batch",
+        "8",
+        "--eval-each-epoch",
+        "--stop-after",
+        "2487",
+        "--set",
+        "loss_weights.group=0.5",
+        "--set",
+        "loss_weights.f1_soft=0.0",
+        "--set",
+        "loss_weights.risk=0.5",
+        "--set",
+        "risk_em_weight=1.0"
+      ],
+      "sbatch_options": [
+        "--gpus=a100-40",
+        "--time=01:15:00",
+        "--export=ALL,EXPERIMENT=row1-ce-risk,TAG=ce50,SEED=0"
+      ]
+    },
+    {
+      "id": "ce25",
+      "loss_weights": {
+        "group": 0.25,
+        "f1_soft": 0.0,
+        "risk": 0.75
+      },
+      "risk_em_weight": 1.0,
+      "train_arguments": [
+        "--per-device-batch",
+        "8",
+        "--eval-each-epoch",
+        "--stop-after",
+        "2487",
+        "--set",
+        "loss_weights.group=0.25",
+        "--set",
+        "loss_weights.f1_soft=0.0",
+        "--set",
+        "loss_weights.risk=0.75",
+        "--set",
+        "risk_em_weight=1.0"
+      ],
+      "sbatch_options": [
+        "--gpus=a100-40",
+        "--time=01:15:00",
+        "--export=ALL,EXPERIMENT=row1-ce-risk,TAG=ce25,SEED=0"
+      ]
+    },
+    {
+      "id": "ce10",
+      "loss_weights": {
+        "group": 0.1,
+        "f1_soft": 0.0,
+        "risk": 0.9
+      },
+      "risk_em_weight": 1.0,
+      "train_arguments": [
+        "--per-device-batch",
+        "8",
+        "--eval-each-epoch",
+        "--stop-after",
+        "2487",
+        "--set",
+        "loss_weights.group=0.1",
+        "--set",
+        "loss_weights.f1_soft=0.0",
+        "--set",
+        "loss_weights.risk=0.9",
+        "--set",
+        "risk_em_weight=1.0"
+      ],
+      "sbatch_options": [
+        "--gpus=a100-40",
+        "--time=01:15:00",
+        "--export=ALL,EXPERIMENT=row1-ce-risk,TAG=ce10,SEED=0"
+      ]
+    },
+    {
+      "id": "ce01",
+      "loss_weights": {
+        "group": 0.01,
+        "f1_soft": 0.0,
+        "risk": 0.99
+      },
+      "risk_em_weight": 1.0,
+      "train_arguments": [
+        "--per-device-batch",
+        "8",
+        "--eval-each-epoch",
+        "--stop-after",
+        "2487",
+        "--set",
+        "loss_weights.group=0.01",
+        "--set",
+        "loss_weights.f1_soft=0.0",
+        "--set",
+        "loss_weights.risk=0.99",
+        "--set",
+        "risk_em_weight=1.0"
+      ],
+      "sbatch_options": [
+        "--gpus=a100-40",
+        "--time=01:15:00",
+        "--export=ALL,EXPERIMENT=row1-ce-risk,TAG=ce01,SEED=0"
+      ]
+    },
+    {
+      "id": "risk100",
+      "loss_weights": {
+        "group": 0.0,
+        "f1_soft": 0.0,
+        "risk": 1.0
+      },
+      "risk_em_weight": 1.0,
+      "train_arguments": [
+        "--per-device-batch",
+        "8",
+        "--eval-each-epoch",
+        "--stop-after",
+        "2487",
+        "--set",
+        "loss_weights.group=0.0",
+        "--set",
+        "loss_weights.f1_soft=0.0",
+        "--set",
+        "loss_weights.risk=1.0",
+        "--set",
+        "risk_em_weight=1.0"
+      ],
+      "sbatch_options": [
+        "--gpus=a100-40",
+        "--time=01:15:00",
+        "--export=ALL,EXPERIMENT=row1-ce-risk,TAG=risk100,SEED=0"
+      ]
+    }
+  ],
+  "estimated_gpu_hours_screening": 4,
+  "screening_note": "Seed-0 epoch-1 scores under a fixed two-epoch schedule. Rank against the fresh pure-CE control; promote promising mixtures for epoch 2 before any final claim.",
+  "confounds": "Coefficients sum to one but loss gradients can have different sizes; this is not gradient-norm balancing. Fixed learning rate isolates this objective sweep, not a separately tuned optimum for every mixture.",
+  "submission_note": "Needs a pure-risk checkpoint/resume smoke before the eight screens. Do not change a checkout while older jobs refer to it. No checkpoint download."
+}

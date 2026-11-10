@@ -37,9 +37,11 @@ from squadqa.data import is_punct
 ARTICLES = {"a", "an", "the"}
 
 
-def content_flags(context: str, words: list[tuple[int, int]]) -> np.ndarray:
-    """(n_words,) bool: False for punctuation words and the articles a/an/the (any case)."""
-    return np.array([not (e - s == 1 and is_punct(context[s])) and context[s:e].lower() not in ARTICLES
+def content_flags(context: str, words: list[tuple[int, int]],
+                  ignored_words: list[str] | set[str] | None = None) -> np.ndarray:
+    """(n_words,) bool: False for punctuation and configured ignored words (any case)."""
+    ignored = ARTICLES if ignored_words is None else set(ignored_words)
+    return np.array([not (e - s == 1 and is_punct(context[s])) and context[s:e].lower() not in ignored
                      for s, e in words], dtype=bool)
 
 

@@ -18,6 +18,19 @@ def test_content_flags():
         False, True, True, False, False, True, True, True, False]
 
 
+def test_configured_preposition_changes_group_but_not_default():
+    text = "Travel to Paris"
+    words = word_spans(text)
+    base = Dc.content_flags(text, words)
+    expanded = Dc.content_flags(text, words, ["a", "an", "the", "to"])
+    assert base.tolist() == [True, True, True]
+    assert expanded.tolist() == [True, False, True]
+    starts = np.array([1, 2])
+    ends = np.array([2, 2])
+    assert Dc.group_keys(base, starts, ends) != Dc.group_keys(expanded, starts, ends)
+    assert Dc.group_keys(expanded, starts, ends) == [(2, 2), (2, 2)]
+
+
 # Content-word F1 and EM.
 
 EIFFEL = "Visit the Eiffel Tower ."          # words: Visit the Eiffel Tower .

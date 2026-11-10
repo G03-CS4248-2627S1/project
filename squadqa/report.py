@@ -70,7 +70,8 @@ def ece(confidence: Sequence[float], correct: Sequence[float], bins: int = BINS)
 
 
 def question_diagnostics(context: str, golds: Sequence[str], cands: Sequence[Sequence[float]], utility: str,
-                         ks: Sequence[int] = RECALL_KS) -> tuple[str, float, list[bool]]:
+                         ks: Sequence[int] = RECALL_KS,
+                         ignored_words: list[str] | None = None) -> tuple[str, float, list[bool]]:
     """One question's MAP answer text, its probability, and for each k whether some top-k candidate
     has official EM 1 against a gold answer. cands: [[start_word, end_word, logp], ...] as saved by
     squadqa.predict, most probable first."""
@@ -78,7 +79,7 @@ def question_diagnostics(context: str, golds: Sequence[str], cands: Sequence[Seq
     arr = np.asarray(cands, dtype=np.float64)
     c = Candidates(arr[:, 0].astype(np.int64), arr[:, 1].astype(np.int64), arr[:, 2])
     texts = [answer_text(context, words, int(i), int(j)) for i, j in zip(c.starts, c.ends)]
-    rep, prob = answer_groups(c, content_flags(context, words), utility, texts)
+    rep, prob = answer_groups(c, content_flags(context, words, ignored_words), utility, texts)
     best = int(np.argmax(prob))
     hit = [max(E.scorer().compute_exact(g, t) for g in golds) for t in texts]
     return texts[rep[best]], float(min(prob[best], 1.0)), [any(hit[:k]) for k in ks]
@@ -104,7 +105,8 @@ def run_report(run_id: str, split: str = "validation") -> dict:
         for p in article["paragraphs"]:
             for qa in p["qas"]:
                 text, prob, rec = question_diagnostics(p["context"], [a["text"] for a in qa["answers"]],
-                                                       cands[qa["id"]], cfg["mbr_utility"], ks)
+                                                       cands[qa["id"]], cfg["mbr_utility"], ks,
+                                                       cfg.get("content_ignore_words"))
                 differ += text != preds[qa["id"]]          # near-ties: the saved logp are rounded
                 conf.append(prob)
                 correct.append(exact[qa["id"]])

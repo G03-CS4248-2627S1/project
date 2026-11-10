@@ -45,7 +45,13 @@ target_unit (joint and compound): span, the default, scores the annotated span, 
 scores the gold's group of boundary variants, −log p(G*), the sum over every span that covers the
 gold's content words (group_nll), so the loss counts the gold answer once, as normalized EM does.
 Compound's auxiliary start and end term stays one-hot either way (spec §4.3).
+
+expanded_group_weight interpolates two group NLLs: the article-only gold group and the
+content_ignore_words gold group. At 1, only the configured group is used; at 0, only the
+article-only group is used. Both share the same span softmax and annotated passage position.
 """
+
+import math
 
 import torch
 import torch.nn as nn
@@ -342,31 +348,32 @@ def joint_nll(out: dict, batch: dict, n_examples: int) -> torch.Tensor:
     return question_nll(with_null(span.flatten(1), out.get("null")), gold, batch["example"], n_examples)
 
 
-def gold_group(span: torch.Tensor, batch: dict) -> torch.Tensor:
+def gold_group(span: torch.Tensor, batch: dict, official: bool = False) -> torch.Tensor:
     """(W, n, n) bool: the valid spans of each window in its question's gold group (target_unit group,
     spec §4.3), the spans that cover the gold's content words and only those: the boundary variants,
     grouped as decode.group_keys does. Worked out per window from the gold's content core, so a trimmed
     variant also counts in a window that cuts off the rest of the gold. A gold without a content word
     is its own group."""
-    content = batch["content"]
+    prefix = "official_" if official else ""
+    content = batch[f"{prefix}content"]
     n = content.size(1)
     idx = torch.arange(n, device=content.device)
     next_c = torch.where(content, idx, n).flip(-1).cummin(-1).values.flip(-1)     # first content word >= i
     prev_c = torch.where(content, idx, -1).cummax(-1).values                       # last content word <= j
-    cs, ce = batch["core_start"][:, None, None], batch["core_end"][:, None, None]
+    cs, ce = batch[f"{prefix}core_start"][:, None, None], batch[f"{prefix}core_end"][:, None, None]
     member = (next_c[:, :, None] == cs) & (prev_c[:, None, :] == ce) & (cs >= 0)
     gs, ge = batch["gold_start"][:, None, None], batch["gold_end"][:, None, None]
     alone = (idx[None, :, None] == gs) & (idx[None, None, :] == ge)
-    no_core = ((batch["core_start"] < 0) & (batch["gold_start"] >= 0))[:, None, None]
+    no_core = ((batch[f"{prefix}core_start"] < 0) & (batch["gold_start"] >= 0))[:, None, None]
     return torch.where(no_core, alone, member) & torch.isfinite(span)
 
 
-def group_nll(out: dict, batch: dict, n_examples: int) -> torch.Tensor:
+def group_nll(out: dict, batch: dict, n_examples: int, official: bool = False) -> torch.Tensor:
     """-log p(G*) (target_unit group): the gold group's summed probability under one softmax over every
     valid span of the question's windows (and the null). Copies in overlapping windows add up, as
     question_nll does for the gold span."""
     span = out["span"]
-    member = gold_group(span, batch)
+    member = gold_group(span, batch, official)
     all_lse = _segment_logsumexp(torch.logsumexp(with_null(span.flatten(1), out.get("null")), -1),
                                  batch["example"], n_examples)
     gold = torch.logsumexp(span.masked_fill(~member, NEG_INF).flatten(1), -1)
@@ -374,6 +381,15 @@ def group_nll(out: dict, batch: dict, n_examples: int) -> torch.Tensor:
     if not torch.isfinite(gold_lse).all():
         raise RuntimeError("a training question has no valid span in its gold group")
     return all_lse - gold_lse
+
+
+def interpolated_group_nll(out: dict, batch: dict, n_examples: int, expanded_weight: float) -> torch.Tensor:
+    """Mix article-only and expanded boundary-group NLLs without changing the span softmax."""
+    expanded = group_nll(out, batch, n_examples)
+    if expanded_weight == 1:
+        return expanded
+    official = group_nll(out, batch, n_examples, official=True)
+    return (1 - expanded_weight) * official + expanded_weight * expanded
 
 
 # F1-weighted targets and the risk loss (milestone 1a; spec §4.3).
@@ -474,6 +490,29 @@ def risk_loss(out: dict, batch: dict, n_examples: int, em_weight: float, counted
 
 def check_head_config(cfg: dict) -> None:
     """Raise on a head setting that is not built or does not apply (spec rule 7: nothing ignored)."""
+    legacy = cfg.get("risk_weight")
+    if legacy is not None:
+        if isinstance(legacy, bool) or not isinstance(legacy, (int, float)) or not math.isfinite(legacy) or legacy < 0:
+            raise ValueError("legacy risk_weight must be finite and nonnegative")
+        if cfg["risk_share"]:
+            raise ValueError("legacy risk_weight cannot be combined with risk_share")
+    if cfg.get("normalize_loss_weights", False) and legacy is None:
+        raise ValueError("normalize_loss_weights needs an explicit legacy risk_weight")
+    weights = cfg.get("loss_weights")
+    if weights is not None:
+        if cfg["span_head"] != "joint":
+            raise ValueError("direct loss_weights require the joint head")
+        if not isinstance(weights, dict) or set(weights) != {"group", "f1_soft", "risk"}:
+            raise ValueError("loss_weights must contain exactly group, f1_soft and risk")
+        if any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0
+               for v in weights.values()) or not math.isclose(sum(weights.values()), 1.0, abs_tol=1e-8):
+            raise ValueError("loss_weights must be finite, nonnegative and sum to one")
+        if cfg["target_unit"] != "group":
+            raise ValueError("direct loss_weights use target_unit group")
+        if cfg.get("normalize_loss_weights", False) or cfg["f1_target_weight"] or cfg.get("risk_weight") or cfg["risk_share"]:
+            raise ValueError("direct loss_weights cannot be combined with alpha, beta or normalize_loss_weights")
+    if cfg.get("normalize_loss_weights", False) and cfg["span_head"] != "joint":
+        raise ValueError("normalize_loss_weights is supported only for the joint head")
     if cfg["span_head"] not in HEADS:
         raise ValueError(f"unknown span_head {cfg['span_head']!r}; choose from {HEADS}")
     if cfg["target_unit"] not in ("span", "group"):
@@ -481,9 +520,20 @@ def check_head_config(cfg: dict) -> None:
     if cfg["target_unit"] == "group" and (cfg["loss_utility"] != "normalized" or cfg["span_head"] not in BILINEAR):
         raise ValueError("target_unit group pools boundary variants: it needs loss_utility normalized and a "
                          f"span softmax, span_head in {BILINEAR}")
-    if cfg["risk_em_weight"] < 0 or (cfg["risk_em_weight"] and not cfg["risk_share"]):
+    mix = cfg.get("expanded_group_weight", 1.0)
+    if not 0 <= mix <= 1:
+        raise ValueError("expanded_group_weight must lie in [0, 1]")
+    if mix < 1 and cfg["target_unit"] != "group":
+        raise ValueError("expanded_group_weight below 1 needs target_unit group")
+    ignored = cfg.get("content_ignore_words", ["a", "an", "the"])
+    if not isinstance(ignored, list) or any(not isinstance(w, str) or not w or w != w.lower() for w in ignored):
+        raise ValueError("content_ignore_words must be a list of nonempty lowercase strings")
+    if not {"a", "an", "the"}.issubset(ignored) or len(ignored) != len(set(ignored)):
+        raise ValueError("content_ignore_words must include a/an/the exactly once and have no duplicates")
+    risk_active = weights["risk"] > 0 if weights is not None else (cfg.get("risk_weight") or cfg["risk_share"]) > 0
+    if cfg["risk_em_weight"] < 0 or (cfg["risk_em_weight"] and not risk_active):
         raise ValueError("risk_em_weight is the EM weight inside the risk loss: it must be >= 0, "
-                         "and above 0 only with risk_share > 0")
+                         "and above 0 only with an active risk term")
     alpha, tau, floor, beta = (cfg["f1_target_weight"], cfg["f1_target_temperature"], cfg["f1_target_floor"],
                                cfg["risk_share"])
     if not (0 <= alpha <= 1 and tau > 0 and 0 <= floor <= 1 and 0 <= beta <= 1):
@@ -517,8 +567,14 @@ class Reader(nn.Module):
         self.no_answer = cfg["no_answer"]
         self.aux_weight = cfg["aux_independent_weight"]
         self.target_unit = cfg["target_unit"]
+        self.expanded_group_weight = cfg.get("expanded_group_weight", 1.0)
+        self.normalize_loss_weights = cfg.get("normalize_loss_weights", False)
+        self.loss_weights = cfg.get("loss_weights")
         self.alpha, self.tau, self.floor = cfg["f1_target_weight"], cfg["f1_target_temperature"], cfg["f1_target_floor"]
-        self.beta, self.risk_em_weight, self.loss_utility = cfg["risk_share"], cfg["risk_em_weight"], cfg["loss_utility"]
+        legacy = cfg.get("risk_weight")
+        self.beta = cfg["risk_share"] if legacy is None else legacy / (1 + legacy)
+        self.loss_scale = 1.0 if legacy is None or self.normalize_loss_weights else 1 + legacy
+        self.risk_em_weight, self.loss_utility = cfg["risk_em_weight"], cfg["loss_utility"]
         self.stats: dict[str, float] = {}               # the last batch's training checks, for the log
         args = (encoder.config.hidden_size, cfg["head_dim"], cfg["max_answer_words"], cfg["train"]["head_dropout"])
         if self.kind == "standard":
@@ -546,19 +602,38 @@ class Reader(nn.Module):
             return independent_nll(out, batch, n_examples)
         if self.kind == "conditional":
             return self.head.loss(out, batch, n_examples)
-        # spec §4.3: ℒ = (1 − β) · ℒ_soft + β · ℒ_risk on the joint term; β = 1 is the risk loss alone
+        if self.loss_weights is not None:
+            weights = self.loss_weights
+            counted = batch["content"] if self.loss_utility == "normalized" else batch["word_mask"]
+            joint = out["span"].new_zeros(n_examples, dtype=torch.float32)
+            if weights["group"]:
+                joint = joint + weights["group"] * interpolated_group_nll(
+                    out, batch, n_examples, self.expanded_group_weight)
+            if weights["f1_soft"]:
+                soft, expected_f1 = f1_target_nll(out, batch, n_examples, self.tau, self.floor,
+                                                 self.target_unit, counted)
+                joint = joint + weights["f1_soft"] * soft
+                self.stats["t_f1_expected_f1"] = float(expected_f1.mean())
+            if weights["risk"]:
+                joint = joint + weights["risk"] * risk_loss(
+                    out, batch, n_examples, self.risk_em_weight, counted)
+            return joint
+        # Current risk_share keeps main's convex objective. An explicitly supplied
+        # legacy additive beta restores its original loss scale for reproduction.
         counted = batch["content"] if self.loss_utility == "normalized" else batch["word_mask"]
         joint = 0.0
         if self.beta < 1:
-            joint = (group_nll if self.target_unit == "group" else joint_nll)(out, batch, n_examples)
+            joint = (interpolated_group_nll(out, batch, n_examples, self.expanded_group_weight)
+                     if self.target_unit == "group" else joint_nll(out, batch, n_examples))
             if self.alpha:
                 f1_part, expected_f1 = f1_target_nll(out, batch, n_examples, self.tau, self.floor,
-                                                     self.target_unit, counted)
+                                                   self.target_unit, counted)
                 joint = (1 - self.alpha) * joint + self.alpha * f1_part
                 self.stats["t_f1_expected_f1"] = float(expected_f1.mean())
         if self.beta:
             joint = (1 - self.beta) * joint + self.beta * risk_loss(out, batch, n_examples, self.risk_em_weight,
-                                                                    counted)
+                                                                  counted)
+        joint = self.loss_scale * joint
         return joint if self.kind == "joint" else joint + self.aux_weight * independent_nll(out, batch, n_examples)
 
     def span_scores(self, batch: dict) -> tuple[torch.Tensor, torch.Tensor | None]:

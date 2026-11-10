@@ -1,0 +1,11 @@
+{
+  "run_id": "2026-10-26-row1-ce-risk-ce10-s0-j1019319",
+  "experiment": "row1-ce-risk",
+  "config_file": "configs/experiments/row1-ce-risk.yaml",
+  "seed": 0,
+  "git_commit": "cfbc4de8b64ef8b5f24c55e494dec841a399b0fa",
+  "git_dirty": false,
+  "slurm_job_id": "1019319",
+  "host": "xgpg2",
+  "started": "2026-10-26T19:25:46"
+}
