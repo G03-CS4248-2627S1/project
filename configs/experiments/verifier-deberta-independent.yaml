@@ -1,0 +1,11 @@
+# V3: fully fine-tuned independently PRETRAINED DeBERTa; no trained reader weights or LoRA.
+verifier:
+  variant: separate
+  separate_model: microsoft/deberta-v3-large
+  gradient_checkpointing: true
+  type: in_place
+  list_unit: span
+  loss: onehot
+  train:
+    lr: 3.0e-5
+f1_target_weight: 0.0

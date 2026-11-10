@@ -1,0 +1,64 @@
+{
+  "reader": "2026-10-23-row1-joint-s0-j998373",
+  "reader_step": null,
+  "lists": "data/verifier/2026-10-23-row1-joint-s0-j998373",
+  "verifier_loss": "gold_group",
+  "candidate_hashes": {
+    "train": "40e2705aed1d0bce70ccf04df6b2561ef1dcbc1f32438028cb9ea9664400ee59",
+    "validation": "e9523a18244bfd226b1ccb984be3f5f1faae24d1895a901e7db6b1cb7d33fdb6"
+  },
+  "attention_backend": "sdpa",
+  "steps": 4974,
+  "train_minutes_last_job": 151.6,
+  "gpu": "NVIDIA A100-PCIE-40GB",
+  "per_device_batch": 16,
+  "peak_gpu_gb_train": 23.3,
+  "validation": {
+    "reader_map": {
+      "exact": 76.85521536066425,
+      "f1": 89.44779256109801,
+      "total": 7708
+    },
+    "reader_mbr": {
+      "exact": 76.9330565646082,
+      "f1": 89.48976061740413,
+      "total": 7708
+    },
+    "verifier_map": {
+      "exact": 70.29060716139077,
+      "f1": 85.25196406413234,
+      "total": 7708
+    },
+    "verifier_mbr": {
+      "exact": 70.45926310326934,
+      "f1": 85.54262653713239,
+      "total": 7708
+    },
+    "combined_map": {
+      "exact": 76.92008303061753,
+      "f1": 89.44591942928348,
+      "total": 7708
+    },
+    "combined_mbr": {
+      "exact": 76.9330565646082,
+      "f1": 89.49129030574127,
+      "total": 7708
+    }
+  },
+  "lambda": 0.0,
+  "lambda_questions": 7210,
+  "temperature": {
+    "combined": 1.1346966590277439,
+    "verifier": 2.85446454209706
+  },
+  "temperature_at_edge": {
+    "combined": false,
+    "verifier": false
+  },
+  "nll": {
+    "reader": 0.47744116716953583,
+    "verifier": 0.7838243843838437,
+    "combined_at_1": 0.47744116716953583,
+    "combined": 0.47392280879292853
+  }
+}

@@ -62,6 +62,7 @@ predictions_<set>_{reader,verifier,combined}_{map,mbr}.json, and adds <set> to m
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -125,6 +126,17 @@ def question_targets(entry: dict, cfg: dict) -> np.ndarray:
     if entry["gold"] is None or np.isnan(f1).any():
         raise ValueError("a training list without its gold")
     return targets(f1, entry["gold"], cfg["f1_target_weight"], cfg["f1_target_temperature"], cfg["f1_target_floor"])
+
+
+def question_correct(entry: dict) -> torch.Tensor:
+    """Validated EM mask; labels are positional and follow the original article normalization."""
+    em = entry.get("em")
+    if em is None or len(em) != len(entry["spans"]) or any(x not in (0, 1) for x in em):
+        raise ValueError("a training list has missing or invalid normalized EM labels")
+    gold = entry["gold"]
+    if gold is None or not 0 <= gold < len(em) or em[gold] != 1:
+        raise ValueError("the annotated gold must be an EM-1 candidate")
+    return torch.tensor(em, dtype=torch.bool)
 
 
 def batch_of(marker: Marker, examples: list[D.Example], entries: list[dict], device: str, pad_id: int):
@@ -191,6 +203,7 @@ def train(v, marker: Marker, examples: list[D.Example], entries: list[dict], cfg
     from squadqa.train_reader import build_optimizer, check_fp32
 
     t = cfg["verifier"]["train"]
+    V.check_loss_config(cfg)
     n = len(examples)
     n_batches = -(-n // t["effective_batch"])
     total_steps = max_steps or n_batches * t["epochs"]
@@ -201,6 +214,8 @@ def train(v, marker: Marker, examples: list[D.Example], entries: list[dict], cfg
     check_fp32(v, opt)
     sizes = [len(e["spans"]) for e in entries]
     tgts = [torch.tensor(question_targets(e, cfg), dtype=torch.float32) for e in entries]
+    correctness = ([question_correct(e) for e in entries]
+                   if cfg["verifier"].get("loss", "onehot") != "onehot" else None)
     use_amp = device.startswith("cuda")
     v.train()
     losses, cand_sum, loss_sum, loss_n, t0 = [], 0, 0.0, 0, time.time()
@@ -214,9 +229,10 @@ def train(v, marker: Marker, examples: list[D.Example], entries: list[dict], cfg
         for ids in micro_batches(batch_ids, sizes, per_device):
             b, question = batch_of(marker, [examples[i] for i in ids], [entries[i] for i in ids], device, pad_id)
             target = torch.cat([tgts[i] for i in ids]).to(device)
+            correct = torch.cat([correctness[i] for i in ids]).to(device) if correctness is not None else None
             with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
                 scores = v(b)
-            per_q = V.listwise_loss(scores, question, target, len(ids))
+            per_q = V.training_loss(scores, question, target, len(ids), cfg["verifier"], correct)
             (per_q.sum() / len(batch_ids)).backward()
             step_loss += per_q.sum().item()
             cand_sum += len(question)
@@ -356,6 +372,8 @@ def build_verifier(cfg: dict, reader_run: str, device: str):
         tok = D.load_tokenizer(rcfg["model"])
         vtok = D.load_tokenizer(cfg["verifier"]["separate_model"])
         encoder = V.load_separate_encoder(cfg["verifier"]["separate_model"])
+        if cfg["verifier"].get("gradient_checkpointing", False):
+            encoder.gradient_checkpointing_enable()
         open_id, close_id = V.add_markers(vtok)
         V.resize_for_markers(encoder, vtok)
         v = V.SeparateVerifier(encoder, open_id, close_id, cfg).to(device)
@@ -375,6 +393,7 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     cfg = C.load_config(args.config, args.set)
+    V.check_loss_config(cfg)
     variant = cfg["verifier"]["variant"]
     if variant not in VARIANTS or cfg["verifier"]["type"] != "in_place":
         raise NotImplementedError(f"only the in-place verifiers are built ({', '.join(VARIANTS)}; #67, #68)")
@@ -418,6 +437,10 @@ def main(argv: list[str] | None = None) -> None:
     C.write_json(run_dir / SCORES, {ex.question.id: s.tolist() for ex, s in zip(vexamples, scores)})
     metrics = write_evaluation(run_dir, vexamples, ventries, scores, rcfg, {
         "reader": args.reader, "reader_step": reader_step, "lists": str(folder),
+        "verifier_loss": cfg["verifier"].get("loss", "onehot"),
+        "candidate_hashes": {split: hashlib.sha256((folder / f"candidates_{split}.json").read_bytes()).hexdigest()
+                             for split in ("train", "validation")},
+        "attention_backend": V.separate_attention(cfg["verifier"]["separate_model"]) if variant == "separate" else "reader",
         "steps": result["steps"], "train_minutes_last_job": round(result["minutes"], 1), "gpu": gpu,
         "per_device_batch": args.per_device_batch, "peak_gpu_gb_train": round(peak_train, 1)})
     print("RESULT", {k: metrics[k] for k in ("validation", "lambda", "steps")}, flush=True)

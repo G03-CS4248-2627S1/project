@@ -1,0 +1,12 @@
+# V2: .9 * ordinary CE + .1 * hard-negative margin loss; EM-1 twins are never negatives.
+verifier:
+  variant: separate
+  separate_model: answerdotai/ModernBERT-large
+  type: in_place
+  list_unit: span
+  loss: ce_margin
+  ranking_weight: 0.1
+  ranking_margin: 1.0
+  train:
+    lr: 3.0e-5
+f1_target_weight: 0.0

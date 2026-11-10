@@ -1,0 +1,11 @@
+{
+  "run_id": "2026-11-01-verifier-ce-margin-s0-j1054687",
+  "experiment": "verifier-ce-margin",
+  "config_file": "configs/experiments/verifier-ce-margin.yaml",
+  "seed": 0,
+  "git_commit": "8f994b6453f83422aed4e0a2559eced9a7d731c0",
+  "git_dirty": false,
+  "slurm_job_id": "1054687",
+  "host": "xgpg4",
+  "started": "2026-11-01T19:25:52"
+}

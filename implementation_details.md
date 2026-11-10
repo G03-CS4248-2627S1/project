@@ -72,6 +72,7 @@ train:                                 # reader fine-tuning: the plan's sandbox 
 verifier:
   variant: separate                    # frozen by E2 (30 Oct, #68): separate = ModernBERT-large, fully fine-tuned (ladder row 4) | shared_lora = frozen reader + LoRA (the losing variant)
   separate_model: answerdotai/ModernBERT-large   # pinned in squadqa/download_model.py; base for development
+  gradient_checkpointing: false        # optional activation recomputation for the independent verifier
   type: in_place                       # in_place | levitated | levitated_shared (both P3)
   shared_option: B                     # levitated_shared only (P3): A = fully shared multi-task, B = frozen reader + marker-only LoRA
   lora: {rank: 16, alpha: 32, targets: [query_proj, key_proj, value_proj]}   # shared_lora and option B; check module names in the installed HF version
@@ -79,6 +80,9 @@ verifier:
   k_train: 8                           # spans sampled per training question, before the gold and its boundary variants are added (squadqa.candidates; #66): lists of 10.4 on average
   sample_temperature: 2.0              # divides the reader's raw span scores when sampling training candidates, above 1 so the lists hold more than the reader's favourites; one value, checked on validation (#66, 27 Oct, reader j998373): before the gold is added, the samples hold an EM-1 span 93.9% of the time, as the validation top-5 does (93.8%), so the sampled distractors are about as hard as the reader's real mistakes; other values not tried
   list_unit: span                      # span = one candidate per span, the gold's boundary variants added | group = one per group of boundary variants (same content core; p summed; k_train and k_infer count groups; no variants added): the verifier picks among answers and leaves boundaries to the reader; E2 kept span (#103: on group lists the fit turned shared_lora off)
+  loss: onehot                        # onehot | gold_group | ce_margin; optional complement ablations
+  ranking_weight: 0.0                  # ce_margin only: (1-weight)*CE + weight*margin loss
+  ranking_margin: 1.0                  # score gap against the highest-scoring EM-0 candidate
   k_sweep: [5, 10, 20, 30]             # levitated variants only (P3)
   train_candidates: sampled            # sampled = drawn from the final reader's own span distribution (plan §4.3) | crossfit (E2 ablation)
   crossfit_folds: 3                    # crossfit ablation only, on base
@@ -372,6 +376,11 @@ risk = (logp.exp() * torch.where(valid, span_loss, torch.zeros_like(span_loss)))
 - **Other sources** (training lists only, `squadqa.candidates --source`): AdversarialQA train, which the reader never saw, as for SQuAD; and the unanswerable questions of §3.6, sampled the same way (so their lists are built like the answerable ones) plus the plausible answer when it is a valid span, with no gold.
 - **Labels** on every candidate, against the reference (the gold, or the plausible answer of an unanswerable question), all between content cores so that every member of a group gets the same values: `f1`, `em`, `precision`, `recall` (`loss_utility`); `relation` (`same`, `inside`, `contains`, `crosses`, `disjoint`); `kind` (`correct` = EM 1, `boundary` = F1 > 0, `wrong` = F1 0); `start_shift`, `end_shift` (candidate core minus reference core, in words); `gap` (words between disjoint cores); `official_f1`, `official_em` (the official scorer on the texts: analysis only, never a target, because it accepts the same text elsewhere, rule 4); `sibling` (the core is the gold core of one of the reader's training questions on the same passage: a memorised answer). Each list also records the reader's own top-1 with the same labels.
 - **Loss:** listwise. Softmax over a question's candidate scores; F1-soft target over the candidates (same α, τ, φ form and the same `loss_utility` as §4.3); cross-entropy.
+  - Optional verifier-only ablations keep the span lists unchanged: `verifier.loss: gold_group` minimizes
+    `logsumexp(all scores) - logsumexp(EM-1 scores)` using positional normalized labels. `ce_margin`
+    mixes ordinary one-hot CE with `max(0, margin - s_gold + max(s_EM0))` using `ranking_weight`
+    (0.1 in the experiment) and `ranking_margin` (1). Lists without an EM-0 negative have zero
+    margin contribution. Both require one-hot targets, span lists and at least one EM-1 span.
 - **Combining** (plan §4.3; `squadqa.train_verifier.evaluate`): over a question's top-k list, log p_reader + λ · s, with λ from a grid that includes 0 (the reader alone), chosen by the NLL of the gold's EM-1 candidates on validation **jointly with a temperature** (`verifier.fit_lambda`: λ 0–5 by 0.1 × T 0.5–5 by 0.05). Fitting λ at T = 1 first turns the verifier off: the reader's and verifier's scores are each about calibrated, so their sum is overconfident, and the NLL at T = 1 chose λ = 0 on every 2026-10-28 run, although on base λ 1.1 at T 2.25 gains +0.4 EM (+0.38 on held-out halves of the validation articles). Then fit one temperature on the combined scores by the same NLL, as the reader is calibrated (§4.4), and decode with the reader's own rules. MBR weighs candidates by these probabilities, so the temperature changes its answers. The verifier alone (plan §9.2's ablation) is softmax(s / T_v), with T_v fitted the same way. λ and the temperatures are fitted on the split they are scored on, so those scores are slightly optimistic. `--rescore <run_id>` reruns this from a run's saved scores, without a GPU.
 - **Unanswerable negatives** (`unanswerable_negatives: true`, row 5): append a null candidate with a fixed score of 0 to every training question's list. Answerable questions give it target 0; the unanswerable questions of §3.6 put all target mass on it. Inference never adds the null candidate.
 - Track **top-k recall** (fraction of questions whose gold span is among the candidates). It caps verifier accuracy.
@@ -399,6 +408,9 @@ Not the default: the default candidates are sampled from the final reader (§5.1
     - The marker embeddings are their own 2-row parameter, written over the word embeddings at the marker ids. Training two rows of the table by masking its gradient would move every row, because AdamW's weight decay ignores a zero gradient (checked 2026-10-23).
 - **`separate`:** `verifier.separate_model` (ModernBERT-large), fully fine-tuned with its own tokenizer (`configs/experiments/verifier-separate.yaml`). Built as `squadqa.verifier.SeparateVerifier`.
   - Pinned in `MODELS` in `squadqa/download_model.py` (base and large). `verifier.load_separate_encoder` loads it in fp32 (§9) with PyTorch's attention (`attn_implementation="sdpa"`), so installing flash-attn would change nothing.
+  - The independent DeBERTa-v3 ablation uses the pinned pretrained DeBERTa encoder with explicit eager
+    attention, not the trained reader checkpoint. Optional `verifier.gradient_checkpointing` recomputes
+    activations to reduce training memory; defaults false, true for this DeBERTa experiment.
   - The reader's weights are not loaded. Its run's config and tokenizer only choose each candidate's window (§5.3).
   - The markers are two new rows of ModernBERT's embedding table, which has no spare rows (50,368 rows, 50,368 tokenizer entries). They start at the mean of the other rows and train with the rest. ModernBERT's byte-level BPE keeps the space before each marker as a token of its own (`Ġin Ġ <a> Ġ1889`), where DeBERTa-v3's tokenizer drops it.
   - The head is `shared_lora`'s (§5.3). Every weight trains, at the config's own learning rate (3e-5, frozen by E2 without tuning, plan §15.3). Weight decay skips biases and LayerNorm weights found by module type (`train_verifier.no_decay`), because ModernBERT's norms (`attn_norm`, `mlp_norm`, …) don't match the reader's name rule.
